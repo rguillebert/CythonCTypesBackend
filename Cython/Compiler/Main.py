@@ -207,6 +207,16 @@ class Context(object):
             debug_transform,
             [generate_pyx_code]))
 
+    def create_pyx_python_backend_pipeline(self, options, result):
+        def generate_python_code(module_node):
+            pass # TODO
+
+        # Check what optimisations are useful for the Cython backend
+        return [
+            create_parse(self),
+            generate_python_code,
+        ]
+
     def create_pxd_pipeline(self, scope, module_name):
         def parse_pxd(source_desc):
             tree = self.parse(source_desc, scope, pxd=True,
@@ -620,7 +630,9 @@ def run_pipeline(source, options, full_module_name = None):
                 options.annotate = True
 
     # Get pipeline
-    if source_ext.lower() == '.py' or not source_ext:
+    if options.python_output:
+        pipeline = context.create_pyx_python_backend_pipeline(options, result)
+    elif source_ext.lower() == '.py' or not source_ext:
         pipeline = context.create_py_pipeline(options, result)
     else:
         pipeline = context.create_pyx_pipeline(options, result)
@@ -837,6 +849,7 @@ default_options = dict(
     use_listing_file = 0,
     errors_to_stderr = 1,
     cplus = 0,
+    python_output = 0,
     output_file = None,
     annotate = None,
     generate_pxi = 0,

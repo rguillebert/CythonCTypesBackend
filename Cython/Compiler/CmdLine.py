@@ -34,6 +34,7 @@ Options:
   -a, --annotate                 Produce a colorized HTML version of the source.
   --line-directives              Produce #line directives pointing to the .pyx source
   --cplus                        Output a C++ rather than C file.
+  --python                       Output Python code
   --embed[=<method_name>]        Generate a main() function that embeds the Python interpreter.
   -2                             Compile based on Python-2 syntax and code semantics.
   -3                             Compile based on Python-3 syntax and code semantics.
@@ -85,6 +86,8 @@ def parse_command_line(args):
                 options.use_listing_file = 1
             elif option in ("-+", "--cplus"):
                 options.cplus = 1
+            elif option == "--python":
+                options.python_output = 1
             elif option == "--embed":
                 Options.embed = "main"
             elif option.startswith("--embed="):
