@@ -208,12 +208,18 @@ class Context(object):
             [generate_pyx_code]))
 
     def create_pyx_python_backend_pipeline(self, options, result):
+        from Cython.CTypesBackend.ExternDefTransform import ExternDefTransform
+        from ParseTreeTransforms import NormalizeTree, PostParse
+
         def generate_python_code(module_node):
             pass # TODO
 
-        # Check what optimisations are useful for the Cython backend
+        # Check what optimisations are useful for the Python backend
         return [
             create_parse(self),
+            NormalizeTree(self),
+            PostParse(self),
+            ExternDefTransform(),
             generate_python_code,
         ]
 
