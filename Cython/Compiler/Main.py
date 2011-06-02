@@ -219,7 +219,9 @@ class Context(object):
             create_parse(self),
             NormalizeTree(self),
             PostParse(self),
+            dumptree,
             ExternDefTransform(),
+            dumptree,
             generate_python_code,
         ]
 
