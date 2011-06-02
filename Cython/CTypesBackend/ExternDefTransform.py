@@ -3,6 +3,11 @@ from Cython.Compiler.Visitor import VisitorTransform
 from Cython.Compiler.Nodes import CFuncDeclaratorNode, CVarDefNode, SingleAssignmentNode
 from Cython.Compiler.ExprNodes import NameNode, AttributeNode, ListNode
 
+def _get_ctypes_type_node(cythontype):
+    """ Given a CSimpleBaseTypeNode, returns an AST Node corresponding to the ctypes type """
+    assert cythontype.is_basic_c_type, "Type %s is not a C primitive type" % cythontype.name
+    return AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"c_" + cythontype.name)
+
 def _make_ctypes_node(name, restype, arglist):
     stmts = []
 
@@ -11,17 +16,15 @@ def _make_ctypes_node(name, restype, arglist):
     func_assign.rhs = AttributeNode(0, obj=NameNode(0, name=u"library"), attribute=name)
 
     func_argtypes = SingleAssignmentNode(0)
-    func_argtypes.lhs = AttributeNode(0, obj=NameNode(0, name=name, attribute=u"argtypes"))
+    func_argtypes.lhs = AttributeNode(0, obj=NameNode(0, name=name), attribute=u"argtypes")
     func_argtypes.rhs = ListNode(0)
     func_argtypes.rhs.args = []
     for argdecl in arglist:
-        assert argdecl.base_type.is_basic_c_type, "Type %s is not a C primitive type" % argdecl.base_type.name
-        func_argtypes.rhs.args.append(AttributeNode(0, obj=NameNode(0, name=u"ctypes", attribute=u"c_" + argdecl.base_type.name)))
+        func_argtypes.rhs.args.append(_get_ctypes_type_node(argdecl.base_type))
 
-    assert restype.is_basic_c_type, "Type %s is not a C primitive type" % restype.name
     func_restype = SingleAssignmentNode(0)
-    func_restype.lhs = AttributeNode(0, obj=NameNode(0, name=name, attribute=u"restype"))
-    func_restype.rhs = AttributeNode(0, obj=NameNode(0, name=u"ctypes", attribute=u"c_" + restype.name))
+    func_restype.lhs = AttributeNode(0, obj=NameNode(0, name=name), attribute=u"restype")
+    func_restype.rhs = _get_ctypes_type_node(restype)
 
     stmts.append(func_assign)
     stmts.append(func_argtypes)
