@@ -230,6 +230,16 @@ class DeclarationWriter(TreeVisitor):
         self.visit(node.body)
         self.dedent()
 
+    def visit_PyClassDefNode(self, node):
+        self.startline(u"class ")
+        self.put(node.name)
+        if node.classobj.bases:
+            self.visit(node.classobj.bases)
+        self.endline(u":")
+        self.indent()
+        self.visit(node.body)
+        self.dedent()
+
     def visit_CTypeDefNode(self, node):
         self.startline(u"ctypedef ")
         self.visit(node.base_type)
@@ -313,13 +323,33 @@ class DeclarationWriter(TreeVisitor):
     # FIXME: represent string nodes correctly
     def visit_StringNode(self, node):
         value = node.value
-        if value.encoding is not None:
-            value = value.encode(value.encoding)
         self.put(repr(value))
 
     def visit_PassStatNode(self, node):
         self.startline(u"pass")
         self.endline()
+
+    def visit_ListNode(self, node):
+        self.put(u"[")
+        for arg in node.args:
+            self.visit(arg)
+            self.put(u",")
+        self.put(u"]")
+
+    def visit_AttributeNode(self, node):
+        self.visit(node.obj)
+        self.put(u".")
+        self.put(node.attribute)
+
+    def visit_TupleNode(self, node):
+        self.put(u"(")
+        for arg in node.args:
+            self.visit(arg)
+            self.put(u",")
+        self.put(u")")
+
+    def visit_list(self, node):
+        import pdb; pdb.set_trace()
 
 class CodeWriter(DeclarationWriter):
 

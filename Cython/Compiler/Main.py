@@ -210,9 +210,12 @@ class Context(object):
     def create_pyx_python_backend_pipeline(self, options, result):
         from Cython.CTypesBackend.ExternDefTransform import ExternDefTransform
         from ParseTreeTransforms import NormalizeTree, PostParse
+        from Cython.CodeWriter import CodeWriter
 
         def generate_python_code(module_node):
-            pass # TODO
+            cw = CodeWriter()
+            cw.visit(module_node)
+            print "\n".join(cw.result.lines)
 
         # Check what optimisations are useful for the Python backend
         return [
