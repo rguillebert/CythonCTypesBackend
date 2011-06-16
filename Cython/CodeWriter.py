@@ -499,7 +499,7 @@ class CodeWriter(DeclarationWriter):
         self.line("raise")
 
     def visit_ImportNode(self, node):
-        self.put(u"(import %s)" % node.module_name.value)
+        self.line(u"import %s" % node.module_name.value)
 
     def visit_TempsBlockNode(self, node):
         """

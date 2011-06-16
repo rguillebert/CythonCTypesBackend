@@ -35,6 +35,7 @@ Options:
   --line-directives              Produce #line directives pointing to the .pyx source
   --cplus                        Output a C++ rather than C file.
   --python                       Output Python code
+  --libs                         Specify the libraries to link with (Python backend only)
   --embed[=<method_name>]        Generate a main() function that embeds the Python interpreter.
   -2                             Compile based on Python-2 syntax and code semantics.
   -3                             Compile based on Python-3 syntax and code semantics.
@@ -88,6 +89,8 @@ def parse_command_line(args):
                 options.cplus = 1
             elif option == "--python":
                 options.python_output = 1
+            elif option == "--libs":
+                options.libs += pop_arg().split(',')
             elif option == "--embed":
                 Options.embed = "main"
             elif option.startswith("--embed="):

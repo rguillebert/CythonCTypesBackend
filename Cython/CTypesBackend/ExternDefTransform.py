@@ -1,22 +1,37 @@
 import ctypes
+import ctypes.util
 from ctypes_configure import configure
 from itertools import chain
 from Cython.Compiler.Visitor import VisitorTransform
 from Cython.Compiler.Nodes import CFuncDeclaratorNode, CVarDefNode, SingleAssignmentNode, CStructOrUnionDefNode, PyClassDefNode, StatListNode, PassStatNode, CPtrDeclaratorNode
-from Cython.Compiler.ExprNodes import NameNode, AttributeNode, ListNode, NoneNode, TupleNode, StringNode, SimpleCallNode
+from Cython.Compiler.ExprNodes import NameNode, AttributeNode, ListNode, NoneNode, TupleNode, StringNode, SimpleCallNode, ImportNode
 
 
 class ExternDefTransform(VisitorTransform):
     visit_Node = VisitorTransform.recurse_to_children
 
-    def _make_ctypes_type_node(self, cythontype):
+    def __init__(self, libs):
+        super(ExternDefTransform, self).__init__()
+        self.libs = libs
+        self.ctypes_struct_union_dict = {}
+
+    def _make_ctypes_type_node(self, cythontype, cythondeclarator):
         """ Given a CSimpleBaseTypeNode, returns an AST Node corresponding to the ctypes type """
+        type_node = None
         if cythontype.is_basic_c_type:
             if cythontype.name == "void":
-                return AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=NoneNode())
-            return AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"c_" + cythontype.name)
+                type_node = NoneNode(0)
+            else:
+                type_node = AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"c_" + cythontype.name)
         else:
-            return NameNode(0, name=unicode(cythontype.name))
+            type_node = NameNode(0, name=unicode(cythontype.name))
+
+        if isinstance(cythondeclarator, CPtrDeclaratorNode):
+            return SimpleCallNode(0, function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"POINTER"), args=[
+                    type_node
+                ])
+        else:
+            return type_node
 
     def _make_struct_attr_list(self, attributes):
         attr_list = []
@@ -40,42 +55,35 @@ class ExternDefTransform(VisitorTransform):
         return attr_list
 
     def _make_ctypes_struct_union_class_node(self, type_name, type_class, union=False):
-        field_list = ListNode(0)
-        field_list.args = []
-        for field in type_class._fields_:
+        def _make_field(field):
             is_pointer = hasattr(field[1], "contents") # XXX: Maybe a better way should be found
-            if is_pointer: field = (field[0], field[1]._type_)
-            if field[1].__module__ == "ctypes":
-                # Basic C types
-                if is_pointer:
-                    field_list.args.append(TupleNode(0, args=[
-                            StringNode(0, value=field[0]),
-                            SimpleCallNode(0, function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"POINTER"), args=[
-                                AttributeNode(0,
-                                    obj=NameNode(0, name=u"ctypes"),
-                                    attribute=unicode(field[1].__name__))
-                            ])
-                        ]))
-                else:
-                    field_list.args.append(TupleNode(0, args=[
+            if is_pointer:
+                inner_field = _make_field((field[0], field[1]._type_))
+                return TupleNode(0, args=[
+                        StringNode(0, value=field[0]),
+                        SimpleCallNode(0, function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"POINTER"), args=[
+                            inner_field.args[1]
+                        ])
+                    ])
+            else:
+                if field[1].__module__ == "ctypes":
+                    # Basic C types
+                    return TupleNode(0, args=[
                         StringNode(0, value=field[0]),
                         AttributeNode(0,
                             obj=NameNode(0, name=u"ctypes"),
                             attribute=unicode(field[1].__name__))
-                        ]))
-            else:
-                if is_pointer:
-                    field_list.args.append(TupleNode(0, args=[
-                            StringNode(0, value=field[0]),
-                            SimpleCallNode(0, function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"POINTER"), args=[
-                                NameNode(0, name=unicode(field[1].__name__))
-                            ])
-                        ]))
+                        ])
                 else:
-                    field_list.args.append(TupleNode(0, args=[
+                    return TupleNode(0, args=[
                         StringNode(0, value=field[0]),
                         NameNode(0, name=unicode(field[1].__name__))
-                        ]))
+                        ])
+
+        field_list = ListNode(0)
+        field_list.args = []
+        for field in type_class._fields_:
+            field_list.args.append(_make_field(field))
 
         field_assign = SingleAssignmentNode(0, lhs=AttributeNode(0, obj=NameNode(0, name=unicode(type_name)), attribute=u"_fields_"), rhs=field_list)
         class_def = PyClassDefNode(0, unicode(type_name), TupleNode(0, args=[AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"Structure")]), None, StatListNode(0, stats=[PassStatNode(0)]))
@@ -109,28 +117,56 @@ class ExternDefTransform(VisitorTransform):
 
         return str(name), ctypes_struct
 
+    def _get_func_lib_node(self, name):
+        func_lib = None
+        func_libname = None
+        for lib_name in self.libs:
+            lib = ctypes.CDLL(ctypes.util.find_library(lib_name))
+            try:
+                getattr(lib, name)
+            except AttributeError:
+                pass
+            finally:
+                func_lib = lib
+                func_libname = lib_name
+                break
+
+        if not func_lib:
+            raise NameError("Function %s cannot be found" % name)
+
+        lib_node = SimpleCallNode(0, function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"CDLL"), args=[
+                SimpleCallNode(0, function=AttributeNode(0, obj=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"util"), attribute=u"find_library"), args=[
+                        StringNode(0, value=func_libname)
+                    ])
+            ])
+        func_node = AttributeNode(0, obj=lib_node, attribute=unicode(name))
+        return func_node
+
     def _make_ctypes_func_node(self, name, restype, arglist):
         stmts = []
 
         func_assign = SingleAssignmentNode(0)
         func_assign.lhs = NameNode(0, name=name)
-        func_assign.rhs = AttributeNode(0, obj=NameNode(0, name=u"library"), attribute=name)
+        func_assign.rhs = self._get_func_lib_node(name)
 
         func_argtypes = SingleAssignmentNode(0)
         func_argtypes.lhs = AttributeNode(0, obj=NameNode(0, name=name), attribute=u"argtypes")
         func_argtypes.rhs = ListNode(0)
         func_argtypes.rhs.args = []
         for argdecl in arglist:
-            func_argtypes.rhs.args.append(self._make_ctypes_type_node(argdecl.base_type))
+            func_argtypes.rhs.args.append(self._make_ctypes_type_node(argdecl.base_type, argdecl.declarator))
 
         func_restype = SingleAssignmentNode(0)
         func_restype.lhs = AttributeNode(0, obj=NameNode(0, name=name), attribute=u"restype")
-        func_restype.rhs = self._make_ctypes_type_node(restype)
+        func_restype.rhs = self._make_ctypes_type_node(restype, argdecl.declarator)
 
         stmts.append(func_assign)
         stmts.append(func_argtypes)
         stmts.append(func_restype)
         return stmts
+
+    def _make_import_ctypes_node(self):
+        return ImportNode(0, module_name=StringNode(0, value="ctypes", name_list=None, level=0))
 
     def visit_CDefExternNode(self, node):
         # TODO: Arrays
@@ -164,9 +200,4 @@ class ExternDefTransform(VisitorTransform):
                     struct_union_nodes.append(class_def)
                     struct_union_field_nodes.append(field_def)
 
-        return list(chain(chain(*func_nodes), struct_union_nodes, struct_union_field_nodes))
-
-    def visit_ModuleNode(self, node):
-        self.ctypes_struct_union_dict = {}
-        self.recurse_to_children(node)
-        return node
+        return [self._make_import_ctypes_node()] + list(chain(chain(*func_nodes), struct_union_nodes, struct_union_field_nodes))

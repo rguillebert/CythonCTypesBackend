@@ -223,7 +223,7 @@ class Context(object):
             NormalizeTree(self),
             PostParse(self),
             dumptree,
-            ExternDefTransform(),
+            ExternDefTransform(options.libs),
             dumptree,
             generate_python_code,
         ]
@@ -861,6 +861,7 @@ default_options = dict(
     errors_to_stderr = 1,
     cplus = 0,
     python_output = 0,
+    libs = [],
     output_file = None,
     annotate = None,
     generate_pxi = 0,
