@@ -43,9 +43,9 @@ cdef extern from "sys/time.h":
         self.assertEquals(self.codeToString(t),
 """\
 import ctypes
-class timeval(ctypes.Structure,):
+class timeval(ctypes.Structure):
     pass
-timeval._fields_ = [('tv_sec',ctypes.c_long,),('tv_usec',ctypes.c_long,),]\
+timeval._fields_ = [('tv_sec',ctypes.c_long),('tv_usec',ctypes.c_long),]\
 """)
 
 if __name__ == "__main__":

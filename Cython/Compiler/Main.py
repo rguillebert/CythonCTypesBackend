@@ -210,6 +210,8 @@ class Context(object):
     def create_pyx_python_backend_pipeline(self, options, result):
         from Cython.CTypesBackend.ExternDefTransform import ExternDefTransform
         from ParseTreeTransforms import NormalizeTree, PostParse
+        from ParseTreeTransforms import AnalyseDeclarationsTransform, AnalyseExpressionsTransform
+        from ParseTreeTransforms import InterpretCompilerDirectives
         from Cython.CodeWriter import CodeWriter
 
         def generate_python_code(module_node):
@@ -222,6 +224,9 @@ class Context(object):
             create_parse(self),
             NormalizeTree(self),
             PostParse(self),
+            InterpretCompilerDirectives(self, self.compiler_directives),
+            AnalyseDeclarationsTransform(self),
+            AnalyseExpressionsTransform(self),
             dumptree,
             ExternDefTransform(options.libs),
             dumptree,

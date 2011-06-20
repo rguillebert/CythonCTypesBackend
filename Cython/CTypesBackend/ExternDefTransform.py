@@ -166,7 +166,7 @@ class ExternDefTransform(VisitorTransform):
         return stmts
 
     def _make_import_ctypes_node(self):
-        return ImportNode(0, module_name=StringNode(0, value="ctypes", name_list=None, level=0))
+        return ImportNode(0, module_name=StringNode(0, value="ctypes"), name_list=[], level=0)
 
     def visit_CDefExternNode(self, node):
         # TODO: Arrays

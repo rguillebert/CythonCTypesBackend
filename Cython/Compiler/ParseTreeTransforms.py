@@ -1474,9 +1474,6 @@ if VALUE is not None:
     def visit_CTypeDefNode(self, node):
         return node
 
-    def visit_CBaseTypeNode(self, node):
-        return None
-
     def visit_CEnumDefNode(self, node):
         if node.visibility == 'public':
             return node
@@ -1491,11 +1488,6 @@ if VALUE is not None:
                 warning(node.pos, "cdef variable '%s' declared after it is used" % node.name, 2)
         self.visitchildren(node)
         return node
-
-    def visit_CVarDefNode(self, node):
-        # to ensure all CNameDeclaratorNodes are visited.
-        self.visitchildren(node)
-        return None
 
     def create_Property(self, entry):
         if entry.visibility == 'public':

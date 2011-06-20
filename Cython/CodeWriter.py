@@ -343,13 +343,11 @@ class DeclarationWriter(TreeVisitor):
 
     def visit_TupleNode(self, node):
         self.put(u"(")
-        for arg in node.args:
+        for i, arg in enumerate(node.args):
+            if i != 0:
+                self.put(u",")
             self.visit(arg)
-            self.put(u",")
         self.put(u")")
-
-    def visit_list(self, node):
-        import pdb; pdb.set_trace()
 
 class CodeWriter(DeclarationWriter):
 
@@ -417,9 +415,12 @@ class CodeWriter(DeclarationWriter):
 
     def visit_SimpleCallNode(self, node):
         self.visit(node.function)
-        self.put(u"(")
-        self.comma_separated_list(node.args)
-        self.put(")")
+        self.put(u'(')
+        for i, arg in enumerate(node.args):
+            if i != 0:
+                self.put(u',')
+            self.visit(arg)
+        self.put(u')')
 
     def visit_GeneralCallNode(self, node):
         self.visit(node.function)
