@@ -1474,6 +1474,9 @@ if VALUE is not None:
     def visit_CTypeDefNode(self, node):
         return node
 
+    def visit_CBaseTypeNode(self, node):
+        return node
+
     def visit_CEnumDefNode(self, node):
         if node.visibility == 'public':
             return node
@@ -1486,6 +1489,11 @@ if VALUE is not None:
             if (entry is None or entry.visibility != 'extern'
                 and not entry.scope.is_c_class_scope):
                 warning(node.pos, "cdef variable '%s' declared after it is used" % node.name, 2)
+        self.visitchildren(node)
+        return node
+
+    def visit_CVarDefNode(self, node):
+        # to ensure all CNameDeclaratorNodes are visited.
         self.visitchildren(node)
         return node
 
