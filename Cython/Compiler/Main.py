@@ -230,10 +230,12 @@ class Context(object):
             NormalizeTree(self),
             PostParse(self),
             InterpretCompilerDirectives(self, self.compiler_directives),
+            dumptree,
             AnalyseDeclarationsTransform(self),
             AnalyseExpressionsTransform(self),
             ExternDefTransform(options.libs),
             CDefVarTransform(),
+            dumptree,
             generate_python_code,
         ]
 
