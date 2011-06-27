@@ -519,7 +519,7 @@ class CodeWriter(DeclarationWriter):
 
     def visit_BytesNode(self, node):
         self.put("'")
-        self.put(unicode(node.value))
+        self.put(unicode(node.value.replace("'","\\'")))
         self.put("'")
 
 class PxdWriter(DeclarationWriter):
