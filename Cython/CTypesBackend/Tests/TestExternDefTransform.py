@@ -11,9 +11,8 @@ cdef extern from "stdio.h":
 """)
         self.assertEquals(self.codeToString(t),
 """\
-import ctypes
 printf = ctypes.CDLL(ctypes.util.find_library('c')).printf
-printf.argtypes = [ctypes.POINTER(ctypes.c_char),ctypes.c_int,ctypes.c_int,]
+printf.argtypes = [ctypes.c_char_p,ctypes.c_int,ctypes.c_int,]
 printf.restype = ctypes.c_int\
 """)
 
@@ -25,9 +24,8 @@ cdef extern from "stdio.h":
 """)
         self.assertEquals(self.codeToString(t),
 u"""\
-import ctypes
 printf = ctypes.CDLL(ctypes.util.find_library('c')).printf
-printf.argtypes = [ctypes.POINTER(ctypes.c_char),ctypes.c_int,ctypes.c_int,]
+printf.argtypes = [ctypes.c_char_p,ctypes.c_int,ctypes.c_int,]
 printf.restype = None\
 """)
 
@@ -42,10 +40,9 @@ cdef extern from "sys/time.h":
 """)
         self.assertEquals(self.codeToString(t),
 """\
-import ctypes
-class timeval(ctypes.Structure):
+class timeval(ctypes.Structure,):
     pass
-timeval._fields_ = [('tv_sec',ctypes.c_long),('tv_usec',ctypes.c_long),]\
+timeval._fields_ = [('tv_sec',ctypes.c_long,),('tv_usec',ctypes.c_long,),]\
 """)
 
 if __name__ == "__main__":

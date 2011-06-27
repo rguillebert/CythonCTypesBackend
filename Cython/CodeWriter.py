@@ -517,6 +517,10 @@ class CodeWriter(DeclarationWriter):
     def visit_TempRefNode(self, node):
         self.put(self.tempnames[node.handle])
 
+    def visit_BytesNode(self, node):
+        self.put("'")
+        self.put(unicode(node.value))
+        self.put("'")
 
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):

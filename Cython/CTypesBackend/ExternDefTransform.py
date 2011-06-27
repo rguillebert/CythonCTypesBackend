@@ -27,6 +27,9 @@ class ExternDefTransform(VisitorTransform):
             type_node = NameNode(0, name=unicode(cythontype.name))
 
         if isinstance(cythondeclarator, CPtrDeclaratorNode):
+            if isinstance(type_node, AttributeNode) and type_node.attribute == u"c_char":
+                return AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"c_char_p")
+
             return SimpleCallNode(0, function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"POINTER"), args=[
                     type_node
                 ])
@@ -166,7 +169,10 @@ class ExternDefTransform(VisitorTransform):
         return stmts
 
     def _make_import_ctypes_node(self):
-        return ImportNode(0, module_name=StringNode(0, value="ctypes"), name_list=[], level=0)
+        return StatListNode(0, stats=[
+            ImportNode(0, module_name=StringNode(0, value="ctypes"), name_list=[], level=0),
+            ImportNode(0, module_name=StringNode(0, value="ctypes.util"), name_list=[], level=0),
+            ])
 
     def visit_CDefExternNode(self, node):
         # TODO: Arrays
