@@ -1393,10 +1393,9 @@ if VALUE is not None:
         # We want to use the struct type information (so it can't happen
         # before this phase) but also create new objects to be declared
         # (so it can't happen later).
-        # Note that we don't return the original node, as it is
-        # never used after this phase.
+        # The node needs to be returned for the CTypes backend.
         if True: # private (default)
-            return None
+            return node
 
         self_value = ExprNodes.AttributeNode(
             pos = node.pos,

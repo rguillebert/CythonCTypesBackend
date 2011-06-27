@@ -194,10 +194,10 @@ class ExternDefTransform(VisitorTransform):
                 else:
                     # Union definition
                     assert False, "Union not supported yet"
-                    struct_name, struct = self._make_ctypes_struct_union(node.include_file, defnode.name, defnode.attributes, union=True)
-                    self.ctypes_struct_union_dict[struct_name] = struct
-                    class_def, field_def = self._make_ctypes_struct_union_class_node(struct_name, struct, union=True)
-                    struct_union_nodes.append(class_def)
-                    struct_union_field_nodes.append(field_def)
 
-        return [self._make_import_ctypes_node()] + list(chain(chain(*func_nodes), struct_union_nodes, struct_union_field_nodes))
+        return list(chain(chain(*func_nodes), struct_union_nodes, struct_union_field_nodes))
+
+    def visit_ModuleNode(self, node):
+        node.body.stats = [self._make_import_ctypes_node()] + node.body.stats
+        self.recurse_to_children(node)
+        return node

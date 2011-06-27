@@ -343,10 +343,9 @@ class DeclarationWriter(TreeVisitor):
 
     def visit_TupleNode(self, node):
         self.put(u"(")
-        for i, arg in enumerate(node.args):
-            if i != 0:
-                self.put(u",")
+        for arg in node.args:
             self.visit(arg)
+            self.put(u",")
         self.put(u")")
 
 class CodeWriter(DeclarationWriter):
