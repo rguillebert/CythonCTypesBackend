@@ -210,6 +210,7 @@ class Context(object):
     def create_pyx_python_backend_pipeline(self, options, result):
         from Cython.CTypesBackend.ExternDefTransform import ExternDefTransform
         from Cython.CTypesBackend.CDefVarTransform import CDefVarTransform
+        from Cython.CTypesBackend.CDefVarManipulationTransform import CDefVarManipulationTransform
         from ParseTreeTransforms import NormalizeTree, PostParse
         from ParseTreeTransforms import AnalyseDeclarationsTransform, AnalyseExpressionsTransform
         from ParseTreeTransforms import InterpretCompilerDirectives
@@ -223,6 +224,7 @@ class Context(object):
         def to_pdb(module_node):
             import pdb
             pdb.set_trace()
+            return module_node
 
         # Check what optimisations are useful for the Python backend
         return [
@@ -233,8 +235,10 @@ class Context(object):
             dumptree,
             AnalyseDeclarationsTransform(self),
             AnalyseExpressionsTransform(self),
+            to_pdb,
             ExternDefTransform(options.libs),
             CDefVarTransform(),
+            CDefVarManipulationTransform(),
             dumptree,
             generate_python_code,
         ]
