@@ -374,7 +374,10 @@ class CodeWriter(DeclarationWriter):
 
     def visit_ForInStatNode(self, node):
         self.startline(u"for ")
-        self.visit(node.target)
+        for i, arg in enumerate(node.target.args):
+            if i != 0:
+                self.put(u", ")
+            self.visit(arg)
         self.put(u" in ")
         self.visit(node.iterator.sequence)
         self.endline(u":")
