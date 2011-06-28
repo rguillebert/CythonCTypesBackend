@@ -248,7 +248,10 @@ class DeclarationWriter(TreeVisitor):
         self.endline()
 
     def visit_FuncDefNode(self, node):
-        self.startline(u"def %s(" % (node.entry.name if node.entry != None else node.name))
+        if node.entry != None:
+            self.startline(u"def %s(" % node.entry.name)
+        else:
+            self.startline(u"def %s(" % node.name)
         self.comma_separated_list(node.args)
         self.endline(u"):")
         self.indent()
