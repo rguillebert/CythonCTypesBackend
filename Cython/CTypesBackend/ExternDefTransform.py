@@ -145,7 +145,7 @@ class ExternDefTransform(VisitorTransform):
         func_node = AttributeNode(0, obj=lib_node, attribute=unicode(name))
         return func_node
 
-    def _make_ctypes_func_node(self, name, restype, arglist):
+    def _make_ctypes_func_node(self, name, restype, arglist, decl):
         stmts = []
 
         func_assign = SingleAssignmentNode(0)
@@ -161,7 +161,7 @@ class ExternDefTransform(VisitorTransform):
 
         func_restype = SingleAssignmentNode(0)
         func_restype.lhs = AttributeNode(0, obj=NameNode(0, name=name), attribute=u"restype")
-        func_restype.rhs = self._make_ctypes_type_node(restype, argdecl.declarator)
+        func_restype.rhs = self._make_ctypes_type_node(restype, decl)
 
         stmts.append(func_assign)
         stmts.append(func_argtypes)
@@ -188,7 +188,7 @@ class ExternDefTransform(VisitorTransform):
                 for decl in defnode.declarators:
                     if isinstance(decl, CFuncDeclaratorNode):
                         # Function definition
-                        func_nodes.append(self._make_ctypes_func_node(decl.base.name, base_type, decl.args))
+                        func_nodes.append(self._make_ctypes_func_node(decl.base.name, base_type, decl.args, decl))
             elif isinstance(defnode, CStructOrUnionDefNode):
                 if defnode.kind == "struct":
                     # Structure definition

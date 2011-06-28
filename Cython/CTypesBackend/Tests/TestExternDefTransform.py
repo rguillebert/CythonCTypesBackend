@@ -7,12 +7,12 @@ class TestExternDefTransform(TransformTest):
         t = self.run_pipeline([NormalizeTree(self), ExternDefTransform(["c"])],
 u"""\
 cdef extern from "stdio.h":
-    int printf(char *, int, int)\
+    int printf(char *, int *)\
 """)
         self.assertEquals(self.codeToString(t),
 """\
 printf = ctypes.CDLL(ctypes.util.find_library('c')).printf
-printf.argtypes = [ctypes.c_char_p,ctypes.c_int,ctypes.c_int,]
+printf.argtypes = [ctypes.c_char_p,ctypes.POINTER(ctypes.c_int),]
 printf.restype = ctypes.c_int\
 """)
 
@@ -20,12 +20,12 @@ printf.restype = ctypes.c_int\
         t = self.run_pipeline([NormalizeTree(self), ExternDefTransform(["c"])],
 u"""\
 cdef extern from "stdio.h":
-    void printf(char *, int, int)\
+    void printf(char *, char)\
 """)
         self.assertEquals(self.codeToString(t),
 u"""\
 printf = ctypes.CDLL(ctypes.util.find_library('c')).printf
-printf.argtypes = [ctypes.c_char_p,ctypes.c_int,ctypes.c_int,]
+printf.argtypes = [ctypes.c_char_p,ctypes.c_char,]
 printf.restype = None\
 """)
 
