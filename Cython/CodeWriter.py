@@ -377,10 +377,13 @@ class CodeWriter(DeclarationWriter):
 
     def visit_ForInStatNode(self, node):
         self.startline(u"for ")
-        for i, arg in enumerate(node.target.args):
-            if i != 0:
-                self.put(u", ")
-            self.visit(arg)
+        if hasattr(node.target, "args"):
+            for i, arg in enumerate(node.target.args):
+                if i != 0:
+                    self.put(u", ")
+                self.visit(arg)
+        else:
+            self.visit(node.target)
         self.put(u" in ")
         self.visit(node.iterator.sequence)
         self.endline(u":")
@@ -498,7 +501,8 @@ class CodeWriter(DeclarationWriter):
 
     def visit_ReturnStatNode(self, node):
         self.startline("return ")
-        self.visit(node.value)
+        if node.value != None:
+            self.visit(node.value)
         self.endline()
 
     def visit_ReraiseStatNode(self, node):
@@ -524,9 +528,28 @@ class CodeWriter(DeclarationWriter):
         self.put(self.tempnames[node.handle])
 
     def visit_BytesNode(self, node):
-        self.put("'")
+        self.put(u"'")
         self.put(unicode(node.value.replace("'","\\'")))
-        self.put("'")
+        self.put(u"'")
+
+    def visit_ContinueStatNode(self, node):
+        self.line("continue")
+
+    def visit_WhileStatNode(self, node):
+        self.startline(u"while ")
+        self.visit(node.condition)
+        self.endline(u":")
+        self.indent()
+        self.visit(node.body)
+        self.dedent()
+        if node.else_clause:
+            self.line("else:")
+            self.indent()
+            self.visit(node.else_clause)
+            self.dedent()
+
+    def visit_BreakStatNode(self, node):
+        self.line(u"break")
 
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):
