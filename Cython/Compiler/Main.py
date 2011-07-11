@@ -232,14 +232,11 @@ class Context(object):
             NormalizeTree(self),
             PostParse(self),
             InterpretCompilerDirectives(self, self.compiler_directives),
-            dumptree,
             AnalyseDeclarationsTransform(self),
             AnalyseExpressionsTransform(self),
-            to_pdb,
             ExternDefTransform(options.libs),
             CDefVarTransform(),
             CDefVarManipulationTransform(),
-            dumptree,
             generate_python_code,
         ]
 

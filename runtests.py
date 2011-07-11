@@ -553,6 +553,7 @@ class CythonCompileTestCase(unittest.TestCase):
             annotate = annotate,
             use_listing_file = False,
             cplus = self.language == 'cpp',
+            python_output = self.language == 'ctypes',
             language_level = self.language_level,
             generate_pxi = False,
             evaluate_tree_assertions = True,
@@ -1250,6 +1251,9 @@ def main():
     parser.add_option("--no-cpp", dest="use_cpp",
                       action="store_false", default=True,
                       help="do not test C++ compilation")
+    parser.add_option("--no-ctypes", dest="use_ctypes",
+                      action="store_false", default=True,
+                      help="do not test ctypes compilation")
     parser.add_option("--no-unit", dest="unittests",
                       action="store_false", default=True,
                       help="do not run the unit tests")
@@ -1439,6 +1443,8 @@ def main():
         languages.append('c')
     if options.use_cpp:
         languages.append('cpp')
+    if options.use_ctypes:
+        languages.append('ctypes')
 
     test_suite = unittest.TestSuite()
 

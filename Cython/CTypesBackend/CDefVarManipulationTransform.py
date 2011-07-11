@@ -35,7 +35,6 @@ class CDefVarManipulationTransform(VisitorTransform):
             tf.args = [node.rhs]
             node.rhs = tf
         else:
-            import pdb; pdb.set_trace()
             tf = TreeFragment(u'%s()' % unicode(node.lhs.type.name)).root.stats[0].expr
             node.rhs = tf
         return node
