@@ -551,6 +551,9 @@ class CodeWriter(DeclarationWriter):
     def visit_BreakStatNode(self, node):
         self.line(u"break")
 
+    def visit_CoerceToBooleanNode(self, node):
+        self.visit(node.arg)
+
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):
         print u'\n'.join(self.write(node).lines)
