@@ -253,6 +253,19 @@ class DeclarationWriter(TreeVisitor):
         else:
             self.startline(u"def %s(" % node.name)
         self.comma_separated_list(node.args)
+        arg_num = len(node.args)
+        if node.star_arg:
+            if arg_num > 0:
+                self.put(u", ")
+            self.put(u"*")
+            self.put(node.star_arg.name)
+            arg_num += 1
+        if node.starstar_arg:
+            if arg_num > 0:
+                self.put(u", ")
+            self.put(u"**")
+            self.put(node.starstar_arg.name)
+
         self.endline(u"):")
         self.indent()
         self.visit(node.body)
