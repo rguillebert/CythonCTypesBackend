@@ -254,13 +254,13 @@ class DeclarationWriter(TreeVisitor):
             self.startline(u"def %s(" % node.name)
         self.comma_separated_list(node.args)
         arg_num = len(node.args)
-        if node.star_arg:
+        if hasattr(node, "star_arg") and node.star_arg:
             if arg_num > 0:
                 self.put(u", ")
             self.put(u"*")
             self.put(node.star_arg.name)
             arg_num += 1
-        if node.starstar_arg:
+        if hasattr(node, "starstar_arg") and node.starstar_arg:
             if arg_num > 0:
                 self.put(u", ")
             self.put(u"**")
@@ -363,6 +363,9 @@ class DeclarationWriter(TreeVisitor):
             self.visit(arg)
             self.put(u",")
         self.put(u")")
+
+    def visit_UnicodeNode(self, node):
+        self.put(unicode(repr(node.value)))
 
 class CodeWriter(DeclarationWriter):
 
@@ -541,6 +544,7 @@ class CodeWriter(DeclarationWriter):
         self.put(self.tempnames[node.handle])
 
     def visit_BytesNode(self, node):
+        # XXX: More things are needed to escape the string
         self.put(u"'")
         self.put(unicode(node.value.replace("'","\\'")))
         self.put(u"'")
