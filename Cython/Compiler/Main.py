@@ -214,6 +214,7 @@ class Context(object):
         from ParseTreeTransforms import NormalizeTree, PostParse
         from ParseTreeTransforms import AnalyseDeclarationsTransform, AnalyseExpressionsTransform
         from ParseTreeTransforms import InterpretCompilerDirectives
+        from ParseTreeTransforms import InterpretCompilerDirectives, RemoveUnreachableCode
         from Cython.CodeWriter import CodeWriter
 
         def generate_python_code(module_node):
@@ -232,6 +233,7 @@ class Context(object):
             NormalizeTree(self),
             PostParse(self),
             InterpretCompilerDirectives(self, self.compiler_directives),
+            RemoveUnreachableCode(self),
             AnalyseDeclarationsTransform(self),
             AnalyseExpressionsTransform(self),
             ExternDefTransform(options.libs),
