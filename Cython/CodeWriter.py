@@ -367,6 +367,14 @@ class DeclarationWriter(TreeVisitor):
     def visit_UnicodeNode(self, node):
         self.put(unicode(repr(node.value)))
 
+    def visit_AssertStatNode(self, node):
+        self.startline(u"assert ")
+        self.visit(node.cond)
+        if node.value:
+            self.put(u", ")
+            self.visit(node.value)
+        self.endline(u"")
+
 class CodeWriter(DeclarationWriter):
 
     def visit_SingleAssignmentNode(self, node):
