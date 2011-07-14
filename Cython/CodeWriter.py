@@ -582,6 +582,12 @@ class CodeWriter(DeclarationWriter):
     def visit_CoerceToBooleanNode(self, node):
         self.visit(node.arg)
 
+    def visit_FloatNode(self, node):
+        self.put(node.value)
+
+    def visit_CoerceToTempNode(self, node):
+        self.visit(node.arg)
+
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):
         print u'\n'.join(self.write(node).lines)
