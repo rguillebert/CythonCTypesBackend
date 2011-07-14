@@ -82,7 +82,10 @@ class DeclarationWriter(TreeVisitor):
         self.visitchildren(node)
 
     def visit_StatListNode(self, node):
-        self.visitchildren(node)
+        if len(node.stats) == 0:
+            self.line(u"pass")
+        else:
+            self.visitchildren(node)
     
     def visit_CDefExternNode(self, node):
         if node.include_file is None:
