@@ -270,6 +270,8 @@ packages = [
     'Cython.Tests',
     'Cython.Build.Tests',
     'Cython.Compiler.Tests',
+    'Cython.CTypesBackend',
+    'Cython.CTypesBackend.Tests',
 ]
 
 if include_debugger:
