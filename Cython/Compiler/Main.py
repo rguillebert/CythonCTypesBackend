@@ -83,6 +83,7 @@ class Context(object):
         self.cpp = cpp
 
         self.pxds = {} # full name -> node tree
+        self.pxds_paths = []
 
         standard_include_path = os.path.abspath(os.path.normpath(
             os.path.join(os.path.dirname(__file__), os.path.pardir, 'Includes')))
@@ -207,7 +208,7 @@ class Context(object):
             debug_transform,
             [generate_pyx_code]))
 
-    def create_pyx_python_backend_pipeline(self, options, result):
+    def create_python_backend_pipeline(self, options, result):
         from Cython.CTypesBackend.ExternDefTransform import ExternDefTransform
         from Cython.CTypesBackend.CDefVarTransform import CDefVarTransform
         from Cython.CTypesBackend.CDefVarManipulationTransform import CDefVarManipulationTransform
@@ -235,12 +236,23 @@ class Context(object):
             InterpretCompilerDirectives(self, self.compiler_directives),
             RemoveUnreachableCode(self),
             AnalyseDeclarationsTransform(self),
+            to_pdb,
             AnalyseExpressionsTransform(self),
             ExternDefTransform(options.libs),
             CDefVarTransform(),
             CDefVarManipulationTransform(),
             generate_python_code,
         ]
+
+    def create_pyx_python_backend_pipeline(self, options, result):
+        def compile_pxds(module_node):
+            pipeline = self.create_python_backend_pipeline(options, result)
+            for pxd in self.pxds_paths:
+                self.run_pipeline(pipeline, CompilationSource(FileSourceDescriptor(pxd), self.extract_module_name(pxd, None), os.getcwd()))
+
+            return module_node
+
+        return self.create_python_backend_pipeline(options, result) + [compile_pxds]
 
     def create_pxd_pipeline(self, scope, module_name):
         def parse_pxd(source_desc):
@@ -260,7 +272,6 @@ class Context(object):
 
     def create_py_pipeline(self, options, result):
         return self.create_pyx_pipeline(options, result, py=True)
-
 
     def process_pxd(self, source_desc, scope, module_name):
         pipeline = self.create_pxd_pipeline(scope, module_name)
@@ -363,6 +374,7 @@ class Context(object):
                         raise err
                     (pxd_codenodes, pxd_scope) = result
                     self.pxds[module_name] = (pxd_codenodes, pxd_scope)
+                    self.pxds_paths.append(pxd_pathname)
                 except CompileError:
                     pass
         return scope
@@ -642,7 +654,7 @@ def run_pipeline(source, options, full_module_name = None):
         rel_path = abs_path
     source_desc = FileSourceDescriptor(abs_path, rel_path)
     source = CompilationSource(source_desc, full_module_name, cwd)
-
+ 
     # Set up result object
     result = create_default_resultobj(source, options)
 
@@ -704,6 +716,7 @@ class CompilationOptions(object):
     language_level    integer   The Python language level: 2 or 3
 
     cplus             boolean   Compile as c++ code
+    python_output     boolean   Compile as python (ctypes) code
     """
 
     def __init__(self, defaults = None, **kw):
