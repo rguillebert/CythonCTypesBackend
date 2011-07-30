@@ -73,8 +73,9 @@ class Context(object):
     #  future_directives     [object]
     #  language_level        int     currently 2 or 3 for Python 2/3
 
-    def __init__(self, include_directories, compiler_directives, cpp=False, language_level=2):
+    def __init__(self, include_directories, compiler_directives, cpp=False, language_level=2, python_output=False):
         import Builtin, CythonScope
+        self.python_output = python_output
         self.modules = {"__builtin__" : Builtin.builtin_scope}
         self.modules["cython"] = CythonScope.create_cython_scope(self)
         self.include_directories = include_directories
@@ -236,7 +237,6 @@ class Context(object):
             InterpretCompilerDirectives(self, self.compiler_directives),
             RemoveUnreachableCode(self),
             AnalyseDeclarationsTransform(self),
-            to_pdb,
             AnalyseExpressionsTransform(self),
             ExternDefTransform(options.libs),
             CDefVarTransform(),
@@ -731,7 +731,7 @@ class CompilationOptions(object):
 
     def create_context(self):
         return Context(self.include_path, self.compiler_directives,
-                      self.cplus, self.language_level)
+                      self.cplus, self.language_level, self.python_output)
 
 
 class CompilationResult(object):

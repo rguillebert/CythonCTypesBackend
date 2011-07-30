@@ -3623,7 +3623,8 @@ class AttributeNode(ExprNode):
             if entry and (
                 entry.is_cglobal or entry.is_cfunction
                 or entry.is_type or entry.is_const):
-                    self.mutate_into_name_node(env, entry, target)
+                    if module_scope.is_flattened:
+                        self.mutate_into_name_node(env, entry, target)
                     return 1
         return 0
 
@@ -3636,15 +3637,16 @@ class AttributeNode(ExprNode):
         if type:
             entry = type.scope.lookup_here(self.attribute)
             if entry and entry.is_cmethod:
-                # Create a temporary entry describing the C method
-                # as an ordinary function.
-                ubcm_entry = Symtab.Entry(entry.name,
-                    "%s->%s" % (type.vtabptr_cname, entry.cname),
-                    entry.type)
-                ubcm_entry.is_cfunction = 1
-                ubcm_entry.func_cname = entry.func_cname
-                ubcm_entry.is_unbound_cmethod = 1
-                self.mutate_into_name_node(env, ubcm_entry, None)
+                if type.scope.is_flattened:
+                    # Create a temporary entry describing the C method
+                    # as an ordinary function.
+                    ubcm_entry = Symtab.Entry(entry.name,
+                        "%s->%s" % (type.vtabptr_cname, entry.cname),
+                        entry.type)
+                    ubcm_entry.is_cfunction = 1
+                    ubcm_entry.func_cname = entry.func_cname
+                    ubcm_entry.is_unbound_cmethod = 1
+                    self.mutate_into_name_node(env, ubcm_entry, None)
                 return 1
         return 0
 
