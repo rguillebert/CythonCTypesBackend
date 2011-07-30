@@ -556,10 +556,8 @@ class CodeWriter(DeclarationWriter):
         self.put(self.tempnames[node.handle])
 
     def visit_BytesNode(self, node):
-        # XXX: More things are needed to escape the string
-        self.put(u"'")
-        self.put(unicode(node.value.replace("'","\\'")))
-        self.put(u"'")
+        # XXX: Is this enough ?
+        self.put(unicode(repr(node.value)))
 
     def visit_ContinueStatNode(self, node):
         self.line("continue")
