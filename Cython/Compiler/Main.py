@@ -213,6 +213,7 @@ class Context(object):
         from Cython.CTypesBackend.ExternDefTransform import ExternDefTransform
         from Cython.CTypesBackend.CDefVarTransform import CDefVarTransform
         from Cython.CTypesBackend.CDefVarManipulationTransform import CDefVarManipulationTransform
+        from Cython.CTypesBackend.CImportToImportTransform import CImportToImportTransform
         from ParseTreeTransforms import NormalizeTree, PostParse
         from ParseTreeTransforms import AnalyseDeclarationsTransform, AnalyseExpressionsTransform
         from ParseTreeTransforms import InterpretCompilerDirectives
@@ -222,6 +223,7 @@ class Context(object):
         def generate_python_code(module_node):
             cw = CodeWriter()
             cw.visit(module_node)
+            print "-"*20
             print "\n".join(cw.result.lines)
 
         def to_pdb(module_node):
@@ -241,6 +243,7 @@ class Context(object):
             ExternDefTransform(options.libs),
             CDefVarTransform(),
             CDefVarManipulationTransform(),
+            CImportToImportTransform(),
             generate_python_code,
         ]
 

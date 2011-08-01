@@ -587,6 +587,12 @@ class CodeWriter(DeclarationWriter):
     def visit_CoerceToTempNode(self, node):
         self.visit(node.arg)
 
+    def visit_FromImportStatNode(self, node):
+        self.startline(u"from ")
+        self.put(node.module.module_name.value)
+        self.put(u" import ")
+        self.endline(u", ".join([name.value for name in node.module.name_list.args]))
+
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):
         print u'\n'.join(self.write(node).lines)
