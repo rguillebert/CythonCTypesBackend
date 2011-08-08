@@ -592,6 +592,16 @@ class CodeWriter(DeclarationWriter):
         self.put(node.module.module_name.value)
         self.put(u" import ")
         self.endline(u", ".join([name.value for name in node.module.name_list.args]))
+    
+    def visit_PrimaryCmpNode(self, node):
+        operator = node.operator
+        self.visit(node.operand1)
+        self.put(operator)
+        self.visit(node.operand2)
+        while node.cascade:
+            node = node.cascade
+            self.put(operator)
+            self.visit(node.operand2)
 
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):
