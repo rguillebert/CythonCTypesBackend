@@ -23,7 +23,7 @@ class CDefVarManipulationTransform(VisitorTransform):
         return isinstance(node, AttributeNode) and isinstance(node.obj.type, CStructOrUnionType)
 
     def is_arg(self, node):
-        return node.entry != None and node.entry.is_arg
+        return hasattr(node, "entry") and node.entry != None and node.entry.is_arg
 
     def is_basic_C_type(self, node):
         return node.type != None and (node.type.is_numeric or node.type.is_string)
