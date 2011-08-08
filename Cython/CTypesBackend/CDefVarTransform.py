@@ -28,7 +28,12 @@ class CDefVarTransform(VisitorTransform):
         return decl.name if hasattr(decl, 'name') else self._get_ptr_name(decl.base)
 
     def _get_vardefnode(self, decl, base_type):
-        name = decl.name if not isinstance(decl, CPtrDeclaratorNode) else self._get_ptr_name(decl)
+        if isinstance(decl, CPtrDeclaratorNode):
+            name = self._get_ptr_name(decl)
+        elif isinstance(decl, CArrayDeclaratorNode):
+            name = decl.base.name
+        else:
+            name = decl.name
         tf = TreeFragment(u'%s = DUMMY()' % (name,)).root.stats[0]
         tf.rhs.function = self._get_type_node(decl, base_type)
         return tf
