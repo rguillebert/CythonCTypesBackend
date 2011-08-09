@@ -613,7 +613,6 @@ class CodeWriter(DeclarationWriter):
         self.visit(node.operand2)
 
     def visit_IndexNode(self, node):
-        import pdb; pdb.set_trace()
         self.visit(node.base)
         self.put(u'[')
         self.visit(node.index)
