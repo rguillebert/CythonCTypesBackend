@@ -592,16 +592,32 @@ class CodeWriter(DeclarationWriter):
         self.put(node.module.module_name.value)
         self.put(u" import ")
         self.endline(u", ".join([name.value for name in node.module.name_list.args]))
-    
+
     def visit_PrimaryCmpNode(self, node):
         operator = node.operator
         self.visit(node.operand1)
+        self.put(u' ')
         self.put(operator)
+        self.put(u' ')
         self.visit(node.operand2)
         while node.cascade:
             node = node.cascade
             self.put(operator)
             self.visit(node.operand2)
+
+    def visit_BoolBinopNode(self, node):
+        self.visit(node.operand1)
+        self.put(u' ')
+        self.put(node.operator)
+        self.put(u' ')
+        self.visit(node.operand2)
+
+    def visit_IndexNode(self, node):
+        import pdb; pdb.set_trace()
+        self.visit(node.base)
+        self.put(u'[')
+        self.visit(node.index)
+        self.put(u']')
 
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):

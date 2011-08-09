@@ -225,6 +225,10 @@ class Context(object):
             cw.visit(module_node)
             print "-"*20
             print "\n".join(cw.result.lines)
+            #output_file = codecs.open(os.path.join(result.output_dir, *module_node.scope.qualified_name.split('.')) + ".py", "w", encoding="utf-8")
+            #output_file.write("# -*- encoding: utf-8 -*-"\n")
+            #output_file.write("\n".join(cw.result.lines))
+            #output_file.close()
 
         def to_pdb(module_node):
             import pdb
@@ -750,6 +754,7 @@ class CompilationResult(object):
     extension_file   string or None   Result of linking the object file
     num_errors       integer          Number of compilation errors
     compilation_source CompilationSource
+    output_dir       string or None   Target compilation directory (ctypes backend only)
     """
 
     def __init__(self):
@@ -761,6 +766,7 @@ class CompilationResult(object):
         self.object_file = None
         self.extension_file = None
         self.main_source_file = None
+        self.output_dir = None
 
 
 class CompilationResultSet(dict):

@@ -17,6 +17,7 @@ class CDefVarManipulationTransform(VisitorTransform):
             'unsigned long' : 'ulong',
             'PY_LONG_LONG' : 'longlong',
             'unsigned PY_LONG_LONG' : 'ulonglong',
+            'Py_ssize_t' : 'int',
     }
 
     def is_structure_field(self, node):
@@ -44,9 +45,8 @@ class CDefVarManipulationTransform(VisitorTransform):
             if not (self.is_structure_field(node.lhs) or self.is_arg(node.lhs)) and self.is_basic_C_type(node.lhs):
                 node.lhs = AttributeNode(0, obj=node.lhs, attribute=u"value")
             elif self.is_arg(node.lhs):
-                return self.wrap(node)
-            return node
-        if isinstance(node, CascadedAssignmentNode):
+                node = self.wrap(node)
+        elif isinstance(node, CascadedAssignmentNode):
             new_lhs_list = []
             for lhs in node.lhs_list:
                 if not (self.is_structure(lhs) or self.is_arg(lhs)) and self.is_basic_C_type(lhs):
@@ -54,10 +54,18 @@ class CDefVarManipulationTransform(VisitorTransform):
                 else:
                     new_lhs_list.append(lhs)
             node.lhs_list = new_lhs_list
-            return node
-        if isinstance(node, ParallelAssignmentNode):
+        elif isinstance(node, ParallelAssignmentNode):
             new_stats = []
             for assnode in node.stats:
                 new_stats.append(self.visit_AssignmentNode(assnode))
             node.stats = new_stats
-            return node
+        self.visitchildren(node)
+        return node
+
+    def visit_CoerceToPyTypeNode(self, node):
+        self.visitchildren(node.arg)
+        return node.arg
+
+    def visit_CoerceFromPyTypeNode(self, node):
+        self.visitchildren(node.arg)
+        return node.arg
