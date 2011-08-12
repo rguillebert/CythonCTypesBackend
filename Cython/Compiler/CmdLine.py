@@ -102,7 +102,7 @@ def parse_command_line(args):
             elif option in ("-w", "--working"):
                 options.working_path = pop_arg()
             elif option in ("-o", "--output-file"):
-                options.output_file = pop_arg()
+                options.output_dir = options.output_file = pop_arg()
             elif option in ("-r", "--recursive"):
                 options.recursive = 1
             elif option in ("-t", "--timestamps"):
