@@ -449,13 +449,24 @@ class CodeWriter(DeclarationWriter):
         self.comma_separated_list(node.args) # Might need to discover whether we need () around tuples...hmm...
 
     def visit_SimpleCallNode(self, node):
-        self.visit(node.function)
+        if isinstance(node.function, ExprNode):
+            self.put('(')
+            self.visit(node.function)
+            self.put(')')
+        else:
+            self.visit(node.function)
+
         self.put(u'(')
         if node.args:
-            for i, arg in enumerate(node.args):
-                if i != 0:
-                    self.put(u',')
-                self.visit(arg)
+            args = node.args
+        elif node.arg_tuple:
+            args = node.arg_tuple.args
+        else:
+            args = []
+        for i, arg in enumerate(args):
+            if i != 0:
+                self.put(u',')
+            self.visit(arg)
         self.put(u')')
 
     def visit_GeneralCallNode(self, node):
