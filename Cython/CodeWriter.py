@@ -333,7 +333,9 @@ class DeclarationWriter(TreeVisitor):
         self.visit(node.operand2)
 
     def visit_AttributeNode(self, node):
+        self.put(u'(')
         self.visit(node.obj)
+        self.put(u')')
         self.put(u".%s" % node.attribute)
 
     def visit_BoolNode(self, node):
@@ -354,11 +356,6 @@ class DeclarationWriter(TreeVisitor):
             self.visit(arg)
             self.put(u",")
         self.put(u"]")
-
-    def visit_AttributeNode(self, node):
-        self.visit(node.obj)
-        self.put(u".")
-        self.put(node.attribute)
 
     def visit_TupleNode(self, node):
         self.put(u"(")
