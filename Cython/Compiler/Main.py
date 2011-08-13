@@ -214,9 +214,9 @@ class Context(object):
         from Cython.CTypesBackend.CDefVarTransform import CDefVarTransform
         from Cython.CTypesBackend.CDefVarManipulationTransform import CDefVarManipulationTransform
         from Cython.CTypesBackend.CImportToImportTransform import CImportToImportTransform
+        from Cython.CTypesBackend.CDefToDefTransform import CDefToDefTransform
         from ParseTreeTransforms import NormalizeTree, PostParse
         from ParseTreeTransforms import AnalyseDeclarationsTransform, AnalyseExpressionsTransform
-        from ParseTreeTransforms import InterpretCompilerDirectives
         from ParseTreeTransforms import InterpretCompilerDirectives, RemoveUnreachableCode
         from Cython.CodeWriter import CodeWriter
 
@@ -251,11 +251,12 @@ class Context(object):
             PostParse(self),
             InterpretCompilerDirectives(self, self.compiler_directives),
             RemoveUnreachableCode(self),
+            CDefToDefTransform(),
             AnalyseDeclarationsTransform(self),
             AnalyseExpressionsTransform(self),
             ExternDefTransform(options.libs),
-            CDefVarTransform(),
             CDefVarManipulationTransform(),
+            CDefVarTransform(),
             CImportToImportTransform(),
             generate_python_code,
         ]
