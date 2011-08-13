@@ -1,6 +1,6 @@
 from Cython.Compiler.Visitor import VisitorTransform
 from Cython.Compiler.Nodes import SingleAssignmentNode, CascadedAssignmentNode, InPlaceAssignmentNode, ParallelAssignmentNode
-from Cython.Compiler.ExprNodes import AttributeNode, NameNode
+from Cython.Compiler.ExprNodes import AttributeNode, NameNode, SimpleCallNode
 from Cython.Compiler.PyrexTypes import CStructOrUnionType
 from Cython.Compiler.TreeFragment import TreeFragment
 
@@ -48,6 +48,11 @@ class CDefVarManipulationTransform(VisitorTransform):
 #            node.stats = new_stats
 #        self.visitchildren(node)
 #        return node
+
+    def visit_AmpersandNode(self, node):
+        tf = TreeFragment(u'ctypes.pointer(DUMMY)').root.stats[0].expr
+        tf.args = [node.operand]
+        return tf
 
     def visit_NameNode(self, node):
         if self.is_basic_C_type(node):

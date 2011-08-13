@@ -19,3 +19,6 @@ class CDefToDefTransform(VisitorTransform):
         node.base_type.name = None
         node.base_type.is_self_arg = oldbase_type.is_self_arg
         return node
+
+    def visit_CDefExternNode(self, node):
+        return node
