@@ -3623,7 +3623,7 @@ class AttributeNode(ExprNode):
             if entry and (
                 entry.is_cglobal or entry.is_cfunction
                 or entry.is_type or entry.is_const):
-                    if module_scope.is_flattened:
+                    if module_scope.is_python:
                         self.mutate_into_name_node(env, entry, target)
                     return 1
         return 0
@@ -3637,7 +3637,7 @@ class AttributeNode(ExprNode):
         if type:
             entry = type.scope.lookup_here(self.attribute)
             if entry and entry.is_cmethod:
-                if type.scope.is_flattened:
+                if type.scope.is_python:
                     # Create a temporary entry describing the C method
                     # as an ordinary function.
                     ubcm_entry = Symtab.Entry(entry.name,

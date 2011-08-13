@@ -228,7 +228,7 @@ class Scope(object):
     # directives       dict                Helper variable for the recursive
     #                                      analysis, contains directive values.
     # is_internal       boolean            Is only used internally (simpler setup)
-    # is_flattened      boolean            The namespace has to be flattened
+    # is_python         boolean            The namespace is a python namespace (no flattening, ...)
 
     is_builtin_scope = 0
     is_py_class_scope = 0
@@ -243,7 +243,7 @@ class Scope(object):
     in_cinclude = 0
     nogil = 0
 
-    def __init__(self, name, outer_scope, parent_scope, is_flattened=False):
+    def __init__(self, name, outer_scope, parent_scope, is_python=False):
         # The outer_scope is the next scope in the lookup chain.
         # The parent_scope is used to derive the qualified name of this scope.
         self.name = name
@@ -279,7 +279,7 @@ class Scope(object):
         self.control_flow = ControlFlow.LinearControlFlow()
         self.return_type = None
         self.id_counters = {}
-        self.is_flattened = getattr(outer_scope, "is_flattened", False) or is_flattened
+        self.is_python = getattr(outer_scope, "is_python", False) or is_python
 
     def start_branching(self, pos):
         self.control_flow = self.control_flow.start_branch(pos)
@@ -889,7 +889,7 @@ class ModuleScope(Scope):
     def __init__(self, name, parent_module, context):
         self.parent_module = parent_module
         outer_scope = context.find_submodule("__builtin__")
-        Scope.__init__(self, name, outer_scope, parent_module, not context.python_output)
+        Scope.__init__(self, name, outer_scope, parent_module, context.python_output)
         if name != "__init__":
             self.module_name = name
         else:
