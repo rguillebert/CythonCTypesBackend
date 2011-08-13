@@ -333,9 +333,12 @@ class DeclarationWriter(TreeVisitor):
         self.visit(node.operand2)
 
     def visit_AttributeNode(self, node):
-        self.put(u'(')
-        self.visit(node.obj)
-        self.put(u')')
+        if isinstance(node.obj, (AtomicExprNode, AttributeNode)):
+            self.visit(node.obj)
+        else:
+            self.put(u'(')
+            self.visit(node.obj)
+            self.put(u')')
         self.put(u".%s" % node.attribute)
 
     def visit_BoolNode(self, node):
@@ -446,12 +449,12 @@ class CodeWriter(DeclarationWriter):
         self.comma_separated_list(node.args) # Might need to discover whether we need () around tuples...hmm...
 
     def visit_SimpleCallNode(self, node):
-        if isinstance(node.function, ExprNode):
+        if isinstance(node.function, (AtomicExprNode, SimpleCallNode)):
+            self.visit(node.function)
+        else:
             self.put('(')
             self.visit(node.function)
             self.put(')')
-        else:
-            self.visit(node.function)
 
         self.put(u'(')
         if node.args:
