@@ -11,14 +11,17 @@ class CDefToDefTransform(VisitorTransform):
         oldbase_type = node.base_type
         node.base_type = CSimpleBaseTypeNode(0)
         node.base_type.name = None
+        node.base_type.is_self_arg = False
+        self.strip_args_types(node.declarator.args)
         return node
 
-    def visit_CArgDeclNode(self, node):
-        oldbase_type = node.base_type
-        node.base_type = CSimpleBaseTypeNode(0)
-        node.base_type.name = None
-        node.base_type.is_self_arg = oldbase_type.is_self_arg
+    def visit_DefNode(self, node):
+        self.strip_args_types(node.args)
         return node
 
-    def visit_CDefExternNode(self, node):
-        return node
+    def strip_args_types(self, args):
+        for arg in args:
+            oldbase_type = arg.base_type
+            arg.base_type = CSimpleBaseTypeNode(0)
+            arg.base_type.name = None
+            arg.base_type.is_self_arg = oldbase_type.is_self_arg
