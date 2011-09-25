@@ -94,18 +94,6 @@ class ExternDefTransform(VisitorTransform):
         return class_def, field_assign
 
     def _make_ctypes_struct_union(self, include_file, name, attributes, union=False):
-        class CConfigure(object):
-            _compilation_info_ = configure.ExternalCompilationInfo(
-                    pre_include_lines = [],
-                    includes = [str(include_file)],
-                    include_dirs = [],
-                    post_include_lines = [],
-                    libraries = [],
-                    library_dirs = [],
-                    separate_module_sources = [],
-                    separate_module_files = [],
-                )
-
         # We create an empty structure before in the case where the structure as a pointer to itself
         class ctypes_struct(ctypes.Structure):
             pass
@@ -113,10 +101,25 @@ class ExternDefTransform(VisitorTransform):
 
         self.ctypes_struct_union_dict[str(name)] = ctypes_struct
 
-        setattr(CConfigure, str(name), configure.Struct("struct " + str(name), self._make_struct_attr_list(attributes)))
+        if include_file != None:
+            class CConfigure(object):
+                _compilation_info_ = configure.ExternalCompilationInfo(
+                        pre_include_lines = [],
+                        includes = [str(include_file)],
+                        include_dirs = [],
+                        post_include_lines = [],
+                        libraries = [],
+                        library_dirs = [],
+                        separate_module_sources = [],
+                        separate_module_files = [],
+                    )
 
-        info = configure.configure(CConfigure)
-        ctypes_struct._fields_ = info[str(name)]._fields_
+            setattr(CConfigure, str(name), configure.Struct("struct " + str(name), self._make_struct_attr_list(attributes)))
+
+            info = configure.configure(CConfigure)
+            ctypes_struct._fields_ = info[str(name)]._fields_
+        else:
+            ctypes_struct._fields_ = self._make_struct_attr_list(attributes)
 
         return str(name), ctypes_struct
 
