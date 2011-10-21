@@ -65,6 +65,8 @@ and the implementation in the file called :file:`Rectangle.cpp`:
 
     #include "Rectangle.h"
 
+    using namespace shapes;
+
     Rectangle::Rectangle(int X0, int Y0, int X1, int Y1)
     {
         x0 = X0;
@@ -109,15 +111,15 @@ In Cython :file:`setup.py` scripts, one normally instantiates an Extension
 object. To make Cython generate and compile a C++ source, you just need
 to add the keyword ``language="c++"`` to your Extension construction statement, as in::
 
-    ext = Extension(
-        "rectangle",                 # name of extension
-        ["rectangle.pyx", "Rectangle.cpp"],     # filename of our Cython source
-        language="c++",              # this causes Cython to create C++ source
-        include_dirs=[...],          # usual stuff
-        libraries=["stdc++", ...],             # ditto
-        extra_link_args=[...],       # if needed
-        cmdclass = {'build_ext': build_ext}
-        )
+   from distutils.core import setup
+   from distutils.extension import Extension
+   from Cython.Distutils import build_ext
+
+   setup(ext_modules=[Extension(
+                      "rectangle",                 # name of extension
+                      ["rectangle.pyx", "Rectangle.cpp"], #  our Cython source
+                      language="c++")],  # causes Cython to create C++ source
+         cmdclass={'build_ext': build_ext})
 
 Cython will generate and compile the :file:`rectangle.cpp` file (from the
 :file:`rectangle.pyx`), then it will compile :file:`Rectangle.cpp`
@@ -359,9 +361,37 @@ exception and converting it into a Python exception. For example, ::
     cdef extern from "some_file.h":
         cdef int foo() except +
 
-This will translate try and the C++ error into an appropriate Python exception
-(currently an IndexError on std::out_of_range and a RuntimeError otherwise
-(preserving the what() message). ::
+This will translate try and the C++ error into an appropriate Python exception.
+The translation is performed according to the following table
+(the ``std::`` prefix is omitted from the C++ identifiers):
+
++-----------------------+---------------------+
+| C++                   | Python              |
++=======================+=====================+
+| ``bad_alloc``         | ``MemoryError``     |
++-----------------------+---------------------+
+| ``bad_cast``          | ``TypeError``       |
++-----------------------+---------------------+
+| ``domain_error``      | ``ValueError``      |
++-----------------------+---------------------+
+| ``invalid_argument``  | ``ValueError``      |
++-----------------------+---------------------+
+| ``ios_base::failure`` | ``IOError``         |
++-----------------------+---------------------+
+| ``out_of_range``      | ``IndexError``      |
++-----------------------+---------------------+
+| ``overflow_error``    | ``OverflowError``   |
++-----------------------+---------------------+
+| ``range_error``       | ``ArithmeticError`` |
++-----------------------+---------------------+
+| ``underflow_error``   | ``ArithmeticError`` |
++-----------------------+---------------------+
+| (all others)          | ``RuntimeError``    |
++-----------------------+---------------------+
+
+The ``what()`` message, if any, is preserved. Note that a C++
+``ios_base_failure`` can denote EOF, but does not carry enough information
+for Cython to discern that, so watch out with exception masks on IO streams. ::
 
     cdef int bar() except +MemoryError
 

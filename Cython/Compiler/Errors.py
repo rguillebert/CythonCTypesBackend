@@ -1,5 +1,5 @@
 #
-#   Pyrex - Errors
+#   Errors
 #
 
 import sys
@@ -20,7 +20,7 @@ def context(position):
     assert not (isinstance(source, unicode) or isinstance(source, str)), (
         "Please replace filename strings with Scanning.FileSourceDescriptor instances %r" % source)
     try:
-        F = list(source.get_lines())
+        F = source.get_lines()
     except UnicodeDecodeError:
         # file has an encoding problem
         s = u"[unprintable code]\n"
@@ -32,7 +32,7 @@ def context(position):
 
 def format_position(position):
     if position:
-        return u"%s:%d:%d: " % (position[0].get_description(),
+        return u"%s:%d:%d: " % (position[0].get_error_description(),
                                 position[1], position[2])
     return u''
 

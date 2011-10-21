@@ -172,16 +172,44 @@ class FileSourceDescriptor(SourceDescriptor):
         self.filename = filename
         self.set_file_type_from_name(filename)
         self._cmp_name = filename
+        self._lines = {}
 
     def get_lines(self, encoding=None, error_handling=None):
-        return Utils.open_source_file(
+        # we cache the lines only the second time this is called, in
+        # order to save memory when they are only used once
+        key = (encoding, error_handling)
+        try:
+            lines = self._lines[key]
+            if lines is not None:
+                return lines
+        except KeyError:
+            pass
+        f = Utils.open_source_file(
             self.filename, encoding=encoding,
             error_handling=error_handling,
             # newline normalisation is costly before Py2.6
             require_normalised_newlines=False)
+        try:
+            lines = list(f)
+        finally:
+            f.close()
+        if key in self._lines:
+            self._lines[key] = lines
+        else:
+            # do not cache the first access, but remember that we
+            # already read it once
+            self._lines[key] = None
+        return lines
 
     def get_description(self):
         return self.path_description
+
+    def get_error_description(self):
+        path = self.filename
+        cwd = Utils.decode_filename(os.getcwd() + os.path.sep)
+        if path.startswith(cwd):
+            return path[len(cwd):]
+        return path
 
     def get_filenametable_entry(self):
         return self.filename
@@ -218,11 +246,16 @@ class StringSourceDescriptor(SourceDescriptor):
     def get_description(self):
         return self.name
 
+    get_error_description = get_description
+
     def get_filenametable_entry(self):
         return "stringsource"
 
     def __hash__(self):
-        return hash(self.name)
+        return id(self)
+        # Do not hash on the name, an identical string source should be the
+        # same object (name is often defaulted in other places)
+        # return hash(self.name)
 
     def __eq__(self, other):
         return isinstance(other, StringSourceDescriptor) and self.name == other.name
@@ -258,10 +291,10 @@ class PyrexScanner(Scanner):
         self.source_encoding = source_encoding
         if filename.is_python_file():
             self.in_python_file = True
-            self.keywords = cython.set(py_reserved_words)
+            self.keywords = set(py_reserved_words)
         else:
             self.in_python_file = False
-            self.keywords = cython.set(pyx_reserved_words)
+            self.keywords = set(pyx_reserved_words)
         self.trace = trace_scanner
         self.indentation_stack = [0]
         self.indentation_char = None

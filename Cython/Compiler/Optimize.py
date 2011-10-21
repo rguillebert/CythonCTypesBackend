@@ -1,6 +1,5 @@
 
 import cython
-from cython import set
 cython.declare(UtilityCode=object, EncodedString=object, BytesLiteral=object,
                Nodes=object, ExprNodes=object, PyrexTypes=object, Builtin=object,
                UtilNodes=object, Naming=object)
@@ -169,7 +168,7 @@ class IterationTransform(Visitor.VisitorTransform):
             if reversed:
                 # CPython raises an error here: not a sequence
                 return node
-            dict_obj = function.obj
+            dict_obj = iterator.self or function.obj
             method = function.attribute
 
             is_py3 = self.module_scope.context.language_level >= 3
@@ -1387,35 +1386,42 @@ class EarlyReplaceBuiltinCalls(Visitor.EnvTransform):
             expr_scope = gen_expr_node.expr_scope, orig_func = is_any and 'any' or 'all')
 
     def _handle_simple_function_sorted(self, node, pos_args):
-        """Transform sorted(genexpr) into [listcomp].sort().  CPython
-        just reads the iterable into a list and calls .sort() on it.
-        Expanding the iterable in a listcomp is still faster.
+        """Transform sorted(genexpr) and sorted([listcomp]) into
+        [listcomp].sort().  CPython just reads the iterable into a
+        list and calls .sort() on it.  Expanding the iterable in a
+        listcomp is still faster and the result can be sorted in
+        place.
         """
         if len(pos_args) != 1:
             return node
-        if not isinstance(pos_args[0], ExprNodes.GeneratorExpressionNode):
-            return node
-        gen_expr_node = pos_args[0]
-        loop_node = gen_expr_node.loop
-        yield_expression, yield_stat_node = self._find_single_yield_expression(loop_node)
-        if yield_expression is None:
+        if isinstance(pos_args[0], ExprNodes.ComprehensionNode) \
+               and pos_args[0].target.type is Builtin.list_type:
+            listcomp_node = pos_args[0]
+            loop_node = listcomp_node.loop
+        elif isinstance(pos_args[0], ExprNodes.GeneratorExpressionNode):
+            gen_expr_node = pos_args[0]
+            loop_node = gen_expr_node.loop
+            yield_expression, yield_stat_node = self._find_single_yield_expression(loop_node)
+            if yield_expression is None:
+                return node
+
+            target = ExprNodes.ListNode(node.pos, args = [])
+            append_node = ExprNodes.ComprehensionAppendNode(
+                yield_expression.pos, expr = yield_expression,
+                target = ExprNodes.CloneNode(target))
+
+            Visitor.recursively_replace_node(loop_node, yield_stat_node, append_node)
+
+            listcomp_node = ExprNodes.ComprehensionNode(
+                gen_expr_node.pos, loop = loop_node, target = target,
+                append = append_node, type = Builtin.list_type,
+                expr_scope = gen_expr_node.expr_scope,
+                has_local_scope = True)
+        else:
             return node
 
         result_node = UtilNodes.ResultRefNode(
             pos = loop_node.pos, type = Builtin.list_type, may_hold_none=False)
-
-        target = ExprNodes.ListNode(node.pos, args = [])
-        append_node = ExprNodes.ComprehensionAppendNode(
-            yield_expression.pos, expr = yield_expression,
-            target = ExprNodes.CloneNode(target))
-
-        Visitor.recursively_replace_node(loop_node, yield_stat_node, append_node)
-
-        listcomp_node = ExprNodes.ComprehensionNode(
-            gen_expr_node.pos, loop = loop_node, target = target,
-            append = append_node, type = Builtin.list_type,
-            expr_scope = gen_expr_node.expr_scope,
-            has_local_scope = True)
         listcomp_assign_node = Nodes.SingleAssignmentNode(
             node.pos, lhs = result_node, rhs = listcomp_node, first = True)
 
@@ -1632,9 +1638,6 @@ class EarlyReplaceBuiltinCalls(Visitor.EnvTransform):
             return node
         if not isinstance(kwargs, ExprNodes.DictNode):
             return node
-        if node.starstar_arg:
-            # we could optimize this by updating the kw dict instead
-            return node
         return kwargs
 
 
@@ -1657,11 +1660,13 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
         arg_tuple = node.positional_args
         if not isinstance(arg_tuple, ExprNodes.TupleNode):
             return node
-        if node.starstar_arg:
+        keyword_args = node.keyword_args
+        if keyword_args and not isinstance(keyword_args, ExprNodes.DictNode):
+            # can't handle **kwargs
             return node
         args = arg_tuple.args
         return self._dispatch_to_handler(
-            node, function, args, node.keyword_args)
+            node, function, args, keyword_args)
 
     def visit_SimpleCallNode(self, node):
         self.visitchildren(node)
@@ -1689,7 +1694,9 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             return node
         return node.arg
 
-    def visit_TypecastNode(self, node):
+    def _visit_TypecastNode(self, node):
+        # disabled - the user may have had a reason to put a type
+        # cast, even if it looks redundant to Cython
         """
         Drop redundant type casts.
         """
@@ -1948,6 +1955,27 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
         exception_value = "((double)-1)",
         exception_check = True)
 
+    def _handle_simple_function_set(self, node, pos_args):
+        if len(pos_args) == 1 and isinstance(pos_args[0], (ExprNodes.ListNode,
+                                                           ExprNodes.TupleNode)):
+            # We can optimise set([x,y,z]) safely into a set literal,
+            # but only if we create all items before adding them -
+            # adding an item may raise an exception if it is not
+            # hashable, but creating the later items may have
+            # side-effects.
+            args = []
+            temps = []
+            for arg in pos_args[0].args:
+                if not arg.is_simple():
+                    arg = UtilNodes.LetRefNode(arg)
+                    temps.append(arg)
+                args.append(arg)
+            result = ExprNodes.SetNode(node.pos, is_temp=1, args=args)
+            for temp in temps[::-1]:
+                result = UtilNodes.EvalWithTempExprNode(temp, result)
+            return result
+        return node
+
     def _handle_simple_function_float(self, node, pos_args):
         """Transform float() into either a C type cast or a faster C
         function call.
@@ -2008,7 +2036,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             ])
 
     _map_to_capi_len_function = {
-        Builtin.unicode_type   : "PyUnicode_GET_SIZE",
+        Builtin.unicode_type   : "__Pyx_PyUnicode_GET_LENGTH",
         Builtin.bytes_type     : "PyBytes_GET_SIZE",
         Builtin.list_type      : "PyList_GET_SIZE",
         Builtin.tuple_type     : "PyTuple_GET_SIZE",
@@ -2129,14 +2157,31 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
         return test_node
 
     def _handle_simple_function_ord(self, node, pos_args):
-        """Unpack ord(Py_UNICODE).
+        """Unpack ord(Py_UNICODE) and ord('X').
         """
         if len(pos_args) != 1:
             return node
         arg = pos_args[0]
         if isinstance(arg, ExprNodes.CoerceToPyTypeNode):
             if arg.arg.type.is_unicode_char:
-                return arg.arg.coerce_to(node.type, self.current_env())
+                return ExprNodes.TypecastNode(
+                    arg.pos, operand=arg.arg, type=PyrexTypes.c_int_type
+                    ).coerce_to(node.type, self.current_env())
+        elif isinstance(arg, ExprNodes.UnicodeNode):
+            if len(arg.value) == 1:
+                return ExprNodes.IntNode(
+                    ord(arg.value), type=PyrexTypes.c_int_type,
+                    value=str(ord(arg.value)),
+                    constant_result=ord(arg.value)
+                    ).coerce_to(node.type, self.current_env())
+        elif isinstance(arg, ExprNodes.StringNode):
+            if arg.unicode_value and len(arg.unicode_value) == 1 \
+                   and ord(arg.unicode_value) <= 255: # Py2/3 portability
+                return ExprNodes.IntNode(
+                    ord(arg.unicode_value), type=PyrexTypes.c_int_type,
+                    value=str(ord(arg.unicode_value)),
+                    constant_result=ord(arg.unicode_value)
+                    ).coerce_to(node.type, self.current_env())
         return node
 
     ### special methods
@@ -2186,6 +2231,34 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             )
 
     ### methods of builtin types
+
+    PyDict_Clear_func_type = PyrexTypes.CFuncType(
+        PyrexTypes.c_void_type, [
+            PyrexTypes.CFuncTypeArg("dict", Builtin.dict_type, None)
+            ])
+
+    PyDict_Clear_Retval_func_type = PyrexTypes.CFuncType(
+        PyrexTypes.py_object_type, [
+            PyrexTypes.CFuncTypeArg("dict", Builtin.dict_type, None)
+            ])
+
+    def _handle_simple_method_dict_clear(self, node, args, is_unbound_method):
+        """Optimise dict.clear() differently, depending on the use (or
+        non-use) of the return value.
+        """
+        if len(args) != 1:
+            return node
+        if node.result_is_used:
+            return self._substitute_method_call(
+                node, "__Pyx_PyDict_Clear", self.PyDict_Clear_Retval_func_type,
+                'clear', is_unbound_method, args,
+                may_return_none=True, is_temp=True,
+                utility_code=py_dict_clear_utility_code
+                ).coerce_to(node.type, self.current_env)
+        else:
+            return self._substitute_method_call(
+                node, "PyDict_Clear", self.PyDict_Clear_func_type,
+                'clear', is_unbound_method, args, is_temp=False)
 
     PyObject_Append_func_type = PyrexTypes.CFuncType(
         PyrexTypes.py_object_type, [
@@ -2284,6 +2357,28 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             'get', is_unbound_method, args,
             may_return_none = True,
             utility_code = dict_getitem_default_utility_code)
+
+    Pyx_PyDict_SetDefault_func_type = PyrexTypes.CFuncType(
+        PyrexTypes.py_object_type, [
+            PyrexTypes.CFuncTypeArg("dict", PyrexTypes.py_object_type, None),
+            PyrexTypes.CFuncTypeArg("key", PyrexTypes.py_object_type, None),
+            PyrexTypes.CFuncTypeArg("default", PyrexTypes.py_object_type, None),
+            ])
+
+    def _handle_simple_method_dict_setdefault(self, node, args, is_unbound_method):
+        """Replace dict.setdefault() by calls to PyDict_GetItem() and PyDict_SetItem().
+        """
+        if len(args) == 2:
+            args.append(ExprNodes.NoneNode(node.pos))
+        elif len(args) != 3:
+            self._error_wrong_arg_count('dict.setdefault', node, args, "2 or 3")
+            return node
+
+        return self._substitute_method_call(
+            node, "__Pyx_PyDict_SetDefault", self.Pyx_PyDict_SetDefault_func_type,
+            'setdefault', is_unbound_method, args,
+            may_return_none = True,
+            utility_code = dict_setdefault_utility_code)
 
 
     ### unicode type methods
@@ -2396,9 +2491,9 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             node, "PyUnicode_Split", self.PyUnicode_Split_func_type,
             'split', is_unbound_method, args)
 
-    PyUnicode_Tailmatch_func_type = PyrexTypes.CFuncType(
+    PyString_Tailmatch_func_type = PyrexTypes.CFuncType(
         PyrexTypes.c_bint_type, [
-            PyrexTypes.CFuncTypeArg("str", Builtin.unicode_type, None),
+            PyrexTypes.CFuncTypeArg("str", PyrexTypes.py_object_type, None),  # bytes/str/unicode
             PyrexTypes.CFuncTypeArg("substring", PyrexTypes.py_object_type, None),
             PyrexTypes.CFuncTypeArg("start", PyrexTypes.c_py_ssize_t_type, None),
             PyrexTypes.CFuncTypeArg("end", PyrexTypes.c_py_ssize_t_type, None),
@@ -2407,20 +2502,22 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
         exception_value = '-1')
 
     def _handle_simple_method_unicode_endswith(self, node, args, is_unbound_method):
-        return self._inject_unicode_tailmatch(
-            node, args, is_unbound_method, 'endswith', +1)
+        return self._inject_tailmatch(
+            node, args, is_unbound_method, 'unicode', 'endswith',
+            unicode_tailmatch_utility_code, +1)
 
     def _handle_simple_method_unicode_startswith(self, node, args, is_unbound_method):
-        return self._inject_unicode_tailmatch(
-            node, args, is_unbound_method, 'startswith', -1)
+        return self._inject_tailmatch(
+            node, args, is_unbound_method, 'unicode', 'startswith',
+            unicode_tailmatch_utility_code, -1)
 
-    def _inject_unicode_tailmatch(self, node, args, is_unbound_method,
-                                  method_name, direction):
+    def _inject_tailmatch(self, node, args, is_unbound_method, type_name,
+                          method_name, utility_code, direction):
         """Replace unicode.startswith(...) and unicode.endswith(...)
         by a direct call to the corresponding C-API function.
         """
         if len(args) not in (2,3,4):
-            self._error_wrong_arg_count('unicode.%s' % method_name, node, args, "2-4")
+            self._error_wrong_arg_count('%s.%s' % (type_name, method_name), node, args, "2-4")
             return node
         self._inject_int_default_argument(
             node, args, 2, PyrexTypes.c_py_ssize_t_type, "0")
@@ -2430,9 +2527,10 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             node.pos, value=str(direction), type=PyrexTypes.c_int_type))
 
         method_call = self._substitute_method_call(
-            node, "__Pyx_PyUnicode_Tailmatch", self.PyUnicode_Tailmatch_func_type,
+            node, "__Pyx_Py%s_Tailmatch" % type_name.capitalize(),
+            self.PyString_Tailmatch_func_type,
             method_name, is_unbound_method, args,
-            utility_code = unicode_tailmatch_utility_code)
+            utility_code = utility_code)
         return method_call.coerce_to(Builtin.bool_type, self.current_env())
 
     PyUnicode_Find_func_type = PyrexTypes.CFuncType(
@@ -2760,31 +2858,54 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
 
         return (encoding, encoding_node, error_handling, error_handling_node)
 
+    def _handle_simple_method_str_endswith(self, node, args, is_unbound_method):
+        return self._inject_tailmatch(
+            node, args, is_unbound_method, 'str', 'endswith',
+            str_tailmatch_utility_code, +1)
+
+    def _handle_simple_method_str_startswith(self, node, args, is_unbound_method):
+        return self._inject_tailmatch(
+            node, args, is_unbound_method, 'str', 'startswith',
+            str_tailmatch_utility_code, -1)
+
+    def _handle_simple_method_bytes_endswith(self, node, args, is_unbound_method):
+        return self._inject_tailmatch(
+            node, args, is_unbound_method, 'bytes', 'endswith',
+            bytes_tailmatch_utility_code, +1)
+
+    def _handle_simple_method_bytes_startswith(self, node, args, is_unbound_method):
+        return self._inject_tailmatch(
+            node, args, is_unbound_method, 'bytes', 'startswith',
+            bytes_tailmatch_utility_code, -1)
 
     ### helpers
 
     def _substitute_method_call(self, node, name, func_type,
                                 attr_name, is_unbound_method, args=(),
-                                utility_code=None,
+                                utility_code=None, is_temp=None,
                                 may_return_none=ExprNodes.PythonCapiCallNode.may_return_none):
         args = list(args)
         if args and not args[0].is_literal:
             self_arg = args[0]
             if is_unbound_method:
                 self_arg = self_arg.as_none_safe_node(
-                    "descriptor '%s' requires a '%s' object but received a 'NoneType'" % (
-                        attr_name, node.function.obj.name))
+                    "descriptor '%s' requires a '%s' object but received a 'NoneType'",
+                    format_args = [attr_name, node.function.obj.name])
             else:
                 self_arg = self_arg.as_none_safe_node(
-                    "'NoneType' object has no attribute '%s'" % attr_name,
-                    error = "PyExc_AttributeError")
+                    "'NoneType' object has no attribute '%s'",
+                    error = "PyExc_AttributeError",
+                    format_args = [attr_name])
             args[0] = self_arg
+        if is_temp is None:
+            is_temp = node.is_temp
         return ExprNodes.PythonCapiCallNode(
             node.pos, name, func_type,
             args = args,
-            is_temp = node.is_temp,
+            is_temp = is_temp,
             utility_code = utility_code,
             may_return_none = may_return_none,
+            result_is_used = node.result_is_used,
             )
 
     def _inject_int_default_argument(self, node, args, arg_index, type, default_value):
@@ -2853,6 +2974,121 @@ static int __Pyx_PyUnicode_Tailmatch(PyObject* s, PyObject* substr,
 ''',
 )
 
+bytes_tailmatch_utility_code = UtilityCode(
+proto="""
+static int __Pyx_PyBytes_Tailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
+                                   Py_ssize_t end, int direction);
+""",
+impl = """
+static int __Pyx_PyBytes_SingleTailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
+                                         Py_ssize_t end, int direction)
+{
+    const char* self_ptr = PyBytes_AS_STRING(self);
+    Py_ssize_t self_len = PyBytes_GET_SIZE(self);
+    const char* sub_ptr;
+    Py_ssize_t sub_len;
+    int retval;
+
+#if PY_VERSION_HEX >= 0x02060000
+    Py_buffer view;
+    view.obj = NULL;
+#endif
+
+    if ( PyBytes_Check(arg) ) {
+        sub_ptr = PyBytes_AS_STRING(arg);
+        sub_len = PyBytes_GET_SIZE(arg);
+    }
+#if PY_MAJOR_VERSION < 3
+    // Python 2.x allows mixing unicode and str
+    else if ( PyUnicode_Check(arg) ) {
+        return PyUnicode_Tailmatch(self, arg, start, end, direction);
+    }
+#endif
+    else {
+#if PY_VERSION_HEX < 0x02060000
+        if (unlikely(PyObject_AsCharBuffer(arg, &sub_ptr, &sub_len)))
+            return -1;
+#else
+        if (unlikely(PyObject_GetBuffer(self, &view, PyBUF_SIMPLE) == -1))
+            return -1;
+        sub_ptr = (const char*) view.buf;
+        sub_len = view.len;
+#endif
+    }
+
+    if (end > self_len)
+        end = self_len;
+    else if (end < 0)
+        end += self_len;
+    if (end < 0)
+        end = 0;
+    if (start < 0)
+        start += self_len;
+    if (start < 0)
+        start = 0;
+
+    if (direction > 0) {
+        /* endswith */
+        if (end-sub_len > start)
+            start = end - sub_len;
+    }
+
+    if (start + sub_len <= end)
+        retval = !memcmp(self_ptr+start, sub_ptr, sub_len);
+    else
+        retval = 0;
+
+#if PY_VERSION_HEX >= 0x02060000
+    if (view.obj)
+        PyBuffer_Release(&view);
+#endif
+
+    return retval;
+}
+
+static int __Pyx_PyBytes_Tailmatch(PyObject* self, PyObject* substr, Py_ssize_t start,
+                                   Py_ssize_t end, int direction)
+{
+    if (unlikely(PyTuple_Check(substr))) {
+        int result;
+        Py_ssize_t i;
+        for (i = 0; i < PyTuple_GET_SIZE(substr); i++) {
+            result = __Pyx_PyBytes_SingleTailmatch(self, PyTuple_GET_ITEM(substr, i),
+                                                   start, end, direction);
+            if (result) {
+                return result;
+            }
+        }
+        return 0;
+    }
+
+    return __Pyx_PyBytes_SingleTailmatch(self, substr, start, end, direction);
+}
+
+""")
+
+str_tailmatch_utility_code = UtilityCode(
+proto = '''
+static CYTHON_INLINE int __Pyx_PyStr_Tailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
+                                               Py_ssize_t end, int direction);
+''',
+# We do not use a C compiler macro here to avoid "unused function"
+# warnings for the *_Tailmatch() function that is not being used in
+# the specific CPython version.  The C compiler will generate the same
+# code anyway, and will usually just remove the unused function.
+impl = '''
+static CYTHON_INLINE int __Pyx_PyStr_Tailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
+                                               Py_ssize_t end, int direction)
+{
+    if (PY_MAJOR_VERSION < 3)
+        return __Pyx_PyBytes_Tailmatch(self, arg, start, end, direction);
+    else
+        return __Pyx_PyUnicode_Tailmatch(self, arg, start, end, direction);
+}
+''',
+requires=[unicode_tailmatch_utility_code, bytes_tailmatch_utility_code]
+)
+
 dict_getitem_default_utility_code = UtilityCode(
 proto = '''
 static PyObject* __Pyx_PyDict_GetItemDefault(PyObject* d, PyObject* key, PyObject* default_value) {
@@ -2888,6 +3124,45 @@ static PyObject* __Pyx_PyDict_GetItemDefault(PyObject* d, PyObject* key, PyObjec
 impl = ""
 )
 
+dict_setdefault_utility_code = UtilityCode(
+proto = """
+static PyObject *__Pyx_PyDict_SetDefault(PyObject *, PyObject *, PyObject *); /*proto*/
+""",
+impl = '''
+static PyObject *__Pyx_PyDict_SetDefault(PyObject *d, PyObject *key, PyObject *default_value) {
+    PyObject* value;
+#if PY_MAJOR_VERSION >= 3
+    value = PyDict_GetItemWithError(d, key);
+    if (unlikely(!value)) {
+        if (unlikely(PyErr_Occurred()))
+            return NULL;
+        if (unlikely(PyDict_SetItem(d, key, default_value) == -1))
+            return NULL;
+        value = default_value;
+    }
+    Py_INCREF(value);
+#else
+    if (PyString_CheckExact(key) || PyUnicode_CheckExact(key) || PyInt_CheckExact(key)) {
+        /* these presumably have safe hash functions */
+        value = PyDict_GetItem(d, key);
+        if (unlikely(!value)) {
+            if (unlikely(PyDict_SetItem(d, key, default_value) == -1))
+                return NULL;
+            value = default_value;
+        }
+        Py_INCREF(value);
+    } else {
+        PyObject *m;
+        m = __Pyx_GetAttrString(d, "setdefault");
+        if (!m) return NULL;
+        value = PyObject_CallFunctionObjArgs(m, key, default_value, NULL);
+        Py_DECREF(m);
+    }
+#endif
+    return value;
+}
+''')
+
 append_utility_code = UtilityCode(
 proto = """
 static CYTHON_INLINE PyObject* __Pyx_PyObject_Append(PyObject* L, PyObject* x) {
@@ -2913,7 +3188,6 @@ impl = ""
 pop_utility_code = UtilityCode(
 proto = """
 static CYTHON_INLINE PyObject* __Pyx_PyObject_Pop(PyObject* L) {
-    PyObject *r, *m;
 #if PY_VERSION_HEX >= 0x02040000
     if (likely(PyList_CheckExact(L))
             /* Check that both the size is positive and no reallocation shrinking needs to be done. */
@@ -2921,12 +3195,13 @@ static CYTHON_INLINE PyObject* __Pyx_PyObject_Pop(PyObject* L) {
         Py_SIZE(L) -= 1;
         return PyList_GET_ITEM(L, PyList_GET_SIZE(L));
     }
+#if PY_VERSION_HEX >= 0x02050000
+    else if (Py_TYPE(L) == (&PySet_Type)) {
+        return PySet_Pop(L);
+    }
 #endif
-    m = __Pyx_GetAttrString(L, "pop");
-    if (!m) return NULL;
-    r = PyObject_CallObject(m, NULL);
-    Py_DECREF(m);
-    return r;
+#endif
+    return PyObject_CallMethod(L, (char*)"pop", NULL);
 }
 """,
 impl = ""
@@ -2980,6 +3255,16 @@ bad:
 }
 """
 )
+
+
+py_dict_clear_utility_code = UtilityCode(
+proto = '''
+static CYTHON_INLINE PyObject* __Pyx_PyDict_Clear(PyObject* d) {
+    PyDict_Clear(d);
+    Py_INCREF(Py_None);
+    return Py_None;
+}
+''')
 
 
 pyobject_as_double_utility_code = UtilityCode(
@@ -3216,6 +3501,26 @@ class ConstantFolding(Visitor.VisitorTransform, SkipDeclarations):
                                     constant_result = node.constant_result)
         return new_node
 
+    def visit_MulNode(self, node):
+        if isinstance(node.operand1, (ExprNodes.ListNode, ExprNodes.TupleNode)):
+            sequence_node = node.operand1
+            factor = node.operand2
+            self._calculate_const(factor)
+            if factor.constant_result != 1:
+                sequence_node.mult_factor = factor
+            self.visitchildren(sequence_node)
+            return sequence_node
+        if isinstance(node.operand1, ExprNodes.IntNode) and \
+               isinstance(node.operand2, (ExprNodes.ListNode, ExprNodes.TupleNode)):
+            sequence_node = node.operand2
+            factor = node.operand1
+            self._calculate_const(factor)
+            if factor.constant_result != 1:
+                sequence_node.mult_factor = factor
+            self.visitchildren(sequence_node)
+            return sequence_node
+        return self.visit_BinopNode(node)
+
     def visit_PrimaryCmpNode(self, node):
         self._calculate_const(node)
         if node.constant_result is ExprNodes.not_a_constant:
@@ -3277,10 +3582,6 @@ class FinalOptimizePhase(Visitor.CythonTransform):
         if node.first:
             lhs = node.lhs
             lhs.lhs_of_first_assignment = True
-            if isinstance(lhs, ExprNodes.NameNode) and lhs.entry.type.is_pyobject:
-                # Have variable initialized to 0 rather than None
-                lhs.entry.init_to_none = False
-                lhs.entry.init = 0
         return node
 
     def visit_SimpleCallNode(self, node):
@@ -3292,10 +3593,10 @@ class FinalOptimizePhase(Visitor.CythonTransform):
             if node.function.name == 'isinstance':
                 type_arg = node.args[1]
                 if type_arg.type.is_builtin_type and type_arg.type.name == 'type':
-                    from CythonScope import utility_scope
-                    node.function.entry = utility_scope.lookup('PyObject_TypeCheck')
+                    cython_scope = self.context.cython_scope
+                    node.function.entry = cython_scope.lookup('PyObject_TypeCheck')
                     node.function.type = node.function.entry.type
-                    PyTypeObjectPtr = PyrexTypes.CPtrType(utility_scope.lookup('PyTypeObject').type)
+                    PyTypeObjectPtr = PyrexTypes.CPtrType(cython_scope.lookup('PyTypeObject').type)
                     node.args[1] = ExprNodes.CastNode(node.args[1], PyTypeObjectPtr)
         return node
 
@@ -3308,4 +3609,13 @@ class FinalOptimizePhase(Visitor.CythonTransform):
         if not node.notnone:
             if not node.arg.may_be_none():
                 node.notnone = True
+        return node
+
+    def visit_NoneCheckNode(self, node):
+        """Remove None checks from expressions that definitely do not
+        carry a None value.
+        """
+        self.visitchildren(node)
+        if not node.arg.may_be_none():
+            return node.arg
         return node

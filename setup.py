@@ -63,6 +63,7 @@ else:
         'Cython.Plex'     : ['*.pxd'],
         'Cython.Compiler' : ['*.pxd'],
         'Cython.Runtime'  : ['*.pyx', '*.pxd'],
+        'Cython.Utility'  : ['*.pyx', '*.pxd', '*.c', '*.h', '.cpp'],
         'Cython'          : [ p[7:] for p in pxd_include_patterns ],
         }
 
@@ -99,8 +100,10 @@ def compile_cython_modules(profile=False, compile_more=False, cython_with_refnan
                         "Cython.Compiler.Scanning",
                         "Cython.Compiler.Parsing",
                         "Cython.Compiler.Visitor",
+                        "Cython.Compiler.FlowControl",
                         "Cython.Compiler.Code",
-                        "Cython.Runtime.refnanny",]
+                        "Cython.Runtime.refnanny",
+                        ]
     if compile_more:
         compiled_modules.extend([
             "Cython.Compiler.ParseTreeTransforms",
@@ -272,6 +275,8 @@ packages = [
     'Cython.Compiler.Tests',
     'Cython.CTypesBackend',
     'Cython.CTypesBackend.Tests',
+    'Cython.Utility',
+    'Cython.Tempita',
 ]
 
 if include_debugger:
@@ -279,7 +284,6 @@ if include_debugger:
     packages.append('Cython.Debugger.Tests')
     # it's enough to do this for Py2.5+:
     setup_args['package_data']['Cython.Debugger.Tests'] = ['codefile', 'cfuncs.c']
-
 
 setup(
   name = 'Cython',

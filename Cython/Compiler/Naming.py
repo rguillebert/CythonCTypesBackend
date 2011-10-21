@@ -1,5 +1,5 @@
 #
-#   Pyrex - C naming conventions
+#   C naming conventions
 #
 #
 #   Prefixes for generating C names.
@@ -38,10 +38,8 @@ typeobj_prefix    = pyrex_prefix + "type_"
 var_prefix        = pyrex_prefix + "v_"
 varptr_prefix     = pyrex_prefix + "vp_"
 wrapperbase_prefix= pyrex_prefix + "wrapperbase_"
-bufstruct_prefix  = pyrex_prefix + "bstruct_"
-bufstride_prefix  = pyrex_prefix + "bstride_"
-bufshape_prefix   = pyrex_prefix + "bshape_"
-bufsuboffset_prefix  = pyrex_prefix + "boffset_"
+pybuffernd_prefix   = pyrex_prefix + "pybuffernd_"
+pybufferstruct_prefix  = pyrex_prefix + "pybuffer_"
 vtable_prefix     = pyrex_prefix + "vtable_"
 vtabptr_prefix    = pyrex_prefix + "vtabptr_"
 vtabstruct_prefix = pyrex_prefix + "vtabstruct_"
@@ -94,6 +92,7 @@ enc_scope_cname  = pyrex_prefix + "enc_scope"
 frame_cname      = pyrex_prefix + "frame"
 frame_code_cname = pyrex_prefix + "frame_code"
 binding_cfunc    = pyrex_prefix + "binding_PyCFunctionType"
+quick_temp_cname = pyrex_prefix + "temp" # temp variable for quick'n'dirty temping
 
 genexpr_id_ref = 'genexpr'
 
@@ -108,6 +107,14 @@ exc_value_name  = pyrex_prefix + "exc_value"
 exc_tb_name     = pyrex_prefix + "exc_tb"
 exc_lineno_name = pyrex_prefix + "exc_lineno"
 
+parallel_exc_type = pyrex_prefix + "parallel_exc_type"
+parallel_exc_value = pyrex_prefix + "parallel_exc_value"
+parallel_exc_tb = pyrex_prefix + "parallel_exc_tb"
+parallel_filename = pyrex_prefix + "parallel_filename"
+parallel_lineno = pyrex_prefix + "parallel_lineno"
+parallel_clineno = pyrex_prefix + "parallel_clineno"
+parallel_why = pyrex_prefix + "parallel_why"
+
 exc_vars = (exc_type_name, exc_value_name, exc_tb_name)
 
 api_name        = pyrex_prefix + "capi__"
@@ -115,6 +122,8 @@ api_name        = pyrex_prefix + "capi__"
 h_guard_prefix   = "__PYX_HAVE__"
 api_guard_prefix = "__PYX_HAVE_API__"
 api_func_guard   = "__PYX_HAVE_API_FUNC_"
+
+PYX_NAN          = "__PYX_NAN"
 
 def py_version_hex(major, minor=0, micro=0, release_level=0, release_serial=0):
     return (major << 24) | (minor << 16) | (micro << 8) | (release_level << 4) | (release_serial)

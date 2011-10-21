@@ -89,6 +89,7 @@ class _nogil(object):
         return exc_class is None
 
 nogil = _nogil()
+gil = _nogil()
 del _nogil
 
 # Emulated types
@@ -238,17 +239,6 @@ py_float = float
 py_complex = complex
 
 
-try:
-    # Python 3
-    from builtins import set, frozenset
-except ImportError:
-    try:
-        # Python 2.4+
-        from __builtin__ import set, frozenset
-    except ImportError:
-        # Py 2.3
-        from sets import Set as set, ImmutableSet as frozenset
-
 # Predefined types
 
 int_types = ['char', 'short', 'Py_UNICODE', 'int', 'long', 'longlong', 'Py_ssize_t', 'size_t']
@@ -287,7 +277,8 @@ class CythonDotParallel(object):
 
     __all__ = ['parallel', 'prange', 'threadid']
 
-    parallel = nogil
+    def parallel(self, num_threads=None):
+        return nogil
 
     def prange(self, start=0, stop=None, step=1, schedule=None, nogil=False):
         if stop is None:
