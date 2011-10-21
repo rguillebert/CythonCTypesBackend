@@ -284,6 +284,68 @@ def insert_into_pipeline(pipeline, transform, before=None, after=None):
 
     return pipeline[:i] + [transform] + pipeline[i:]
 
+def create_python_backend_pipeline(context, options, result):
+    from Cython.CTypesBackend.ExternDefTransform import ExternDefTransform
+    from Cython.CTypesBackend.CDefVarTransform import CDefVarTransform
+    from Cython.CTypesBackend.CDefVarManipulationTransform import CDefVarManipulationTransform
+    from Cython.CTypesBackend.CImportToImportTransform import CImportToImportTransform
+    from Cython.CTypesBackend.CDefToDefTransform import CDefToDefTransform
+    from ParseTreeTransforms import NormalizeTree, PostParse
+    from ParseTreeTransforms import AnalyseDeclarationsTransform, AnalyseExpressionsTransform
+    from ParseTreeTransforms import InterpretCompilerDirectives, RemoveUnreachableCode
+    from Cython.CodeWriter import CodeWriter
+
+    def generate_python_code(module_node):
+        cw = CodeWriter()
+        cw.visit(module_node)
+        try:
+            os.mkdir(result.output_dir)
+        except OSError:
+            pass
+        dirs = module_node.scope.qualified_name.split('.')
+        for i in range(1, len(dirs)):
+            subpath = os.path.join(result.output_dir, *dirs[0:i])
+            os.mkdir(subpath)
+            open(os.path.join(subpath, "__init__.py"), "w").close()
+
+        output_file = codecs.open(os.path.join(result.output_dir, *dirs) + ".py", "w", encoding="utf-8")
+        output_file.write("# -*- encoding: utf-8 -*-\n")
+        output_file.write("\n".join(cw.result.lines))
+        output_file.write("\n")
+        output_file.close()
+
+    def to_pdb(module_node):
+        import pdb
+        pdb.set_trace()
+        return module_node
+
+    # Check what optimisations are useful for the Python backend
+    return [
+        parse_stage_factory(context),
+        NormalizeTree(context),
+        PostParse(context),
+        InterpretCompilerDirectives(context, context.compiler_directives),
+        RemoveUnreachableCode(context),
+        CDefToDefTransform(),
+        AnalyseDeclarationsTransform(context),
+        AnalyseExpressionsTransform(context),
+        ExternDefTransform(options.libs),
+        CDefVarManipulationTransform(),
+        CDefVarTransform(),
+        CImportToImportTransform(),
+        generate_python_code,
+    ]
+
+def create_pyx_python_backend_pipeline(context, options, result):
+    def compile_pxds(module_node):
+        pipeline = create_python_backend_pipeline(context, options, result)
+        for pxd in context.pxds_paths:
+            run_pipeline(pipeline, CompilationSource(FileSourceDescriptor(pxd), context.extract_module_name(pxd, None), os.getcwd()))
+
+        return module_node
+
+    return create_python_backend_pipeline(context, options, result) + [compile_pxds]
+
 #
 # Running a pipeline
 #

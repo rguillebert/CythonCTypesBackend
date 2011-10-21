@@ -471,7 +471,7 @@ def run_pipeline(source, options, full_module_name = None):
 
     # Get pipeline
     if options.python_output:
-        pipeline = Pipeline.create_pyx_python_backend_pipeline(options, result)
+        pipeline = Pipeline.create_pyx_python_backend_pipeline(context, options, result)
     elif source_ext.lower() == '.py' or not source_ext:
         pipeline = Pipeline.create_py_pipeline(context, options, result)
     else:

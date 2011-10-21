@@ -12,7 +12,7 @@ class CythonScope(ModuleScope):
     _cythonscope_initialized = False
 
     def __init__(self, context):
-        ModuleScope.__init__(self, u'cython', None, None)
+        ModuleScope.__init__(self, u'cython', None, context)
         self.pxd_file_loaded = True
         self.populate_cython_scope()
         # The Main.Context object
