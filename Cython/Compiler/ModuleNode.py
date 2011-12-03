@@ -16,10 +16,9 @@ import Code
 import Naming
 import Nodes
 import Options
-import PyrexTypes
 import TypeSlots
 import Version
-import DebugFlags
+import PyrexTypes
 
 from Errors import error, warning
 from PyrexTypes import py_object_type
@@ -504,180 +503,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         code.putln("#else")
         code.globalstate["end"].putln("#endif /* Py_PYTHON_H */")
 
-        code.put("""
-#include <stddef.h> /* For offsetof */
-#ifndef offsetof
-#define offsetof(type, member) ( (size_t) & ((type*)0) -> member )
-#endif
-
-#if !defined(WIN32) && !defined(MS_WINDOWS)
-  #ifndef __stdcall
-    #define __stdcall
-  #endif
-  #ifndef __cdecl
-    #define __cdecl
-  #endif
-  #ifndef __fastcall
-    #define __fastcall
-  #endif
-#endif
-
-#ifndef DL_IMPORT
-  #define DL_IMPORT(t) t
-#endif
-#ifndef DL_EXPORT
-  #define DL_EXPORT(t) t
-#endif
-
-#ifndef PY_LONG_LONG
-  #define PY_LONG_LONG LONG_LONG
-#endif
-
-#if PY_VERSION_HEX < 0x02050000
-  typedef int Py_ssize_t;
-  #define PY_SSIZE_T_MAX INT_MAX
-  #define PY_SSIZE_T_MIN INT_MIN
-  #define PY_FORMAT_SIZE_T \"\"
-  #define PyInt_FromSsize_t(z) PyInt_FromLong(z)
-  #define PyInt_AsSsize_t(o)   __Pyx_PyInt_AsInt(o)
-  #define PyNumber_Index(o)    PyNumber_Int(o)
-  #define PyIndex_Check(o)     PyNumber_Check(o)
-  #define PyErr_WarnEx(category, message, stacklevel) PyErr_Warn(category, message)
-#endif
-
-#if PY_VERSION_HEX < 0x02060000
-  #define Py_REFCNT(ob) (((PyObject*)(ob))->ob_refcnt)
-  #define Py_TYPE(ob)   (((PyObject*)(ob))->ob_type)
-  #define Py_SIZE(ob)   (((PyVarObject*)(ob))->ob_size)
-  #define PyVarObject_HEAD_INIT(type, size) \\
-          PyObject_HEAD_INIT(type) size,
-  #define PyType_Modified(t)
-
-  typedef struct {
-     void *buf;
-     PyObject *obj;
-     Py_ssize_t len;
-     Py_ssize_t itemsize;
-     int readonly;
-     int ndim;
-     char *format;
-     Py_ssize_t *shape;
-     Py_ssize_t *strides;
-     Py_ssize_t *suboffsets;
-     void *internal;
-  } Py_buffer;
-
-  #define PyBUF_SIMPLE 0
-  #define PyBUF_WRITABLE 0x0001
-  #define PyBUF_FORMAT 0x0004
-  #define PyBUF_ND 0x0008
-  #define PyBUF_STRIDES (0x0010 | PyBUF_ND)
-  #define PyBUF_C_CONTIGUOUS (0x0020 | PyBUF_STRIDES)
-  #define PyBUF_F_CONTIGUOUS (0x0040 | PyBUF_STRIDES)
-  #define PyBUF_ANY_CONTIGUOUS (0x0080 | PyBUF_STRIDES)
-  #define PyBUF_INDIRECT (0x0100 | PyBUF_STRIDES)
-
-#endif
-
-#if PY_MAJOR_VERSION < 3
-  #define __Pyx_BUILTIN_MODULE_NAME "__builtin__"
-  #define __Pyx_PyIdentifier_FromString(s) PyString_FromString(s)
-  #define __Pyx_PyCode_New(a, k, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos) \\
-          PyCode_New(a, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos)
-#else
-  #define __Pyx_BUILTIN_MODULE_NAME "builtins"
-  #define __Pyx_PyIdentifier_FromString(s) PyUnicode_FromString(s)
-  #define __Pyx_PyCode_New(a, k, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos) \\
-          PyCode_New(a, k, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos)
-#endif
-
-#if PY_MAJOR_VERSION >= 3
-  #define Py_TPFLAGS_CHECKTYPES 0
-  #define Py_TPFLAGS_HAVE_INDEX 0
-#endif
-
-#if (PY_VERSION_HEX < 0x02060000) || (PY_MAJOR_VERSION >= 3)
-  #define Py_TPFLAGS_HAVE_NEWBUFFER 0
-#endif
-
-/* new Py3.3 unicode representation (PEP 393) */
-#if PY_VERSION_HEX > 0x03030000 && defined(PyUnicode_GET_LENGTH)
-  #define CYTHON_PEP393_ENABLED
-  #define __Pyx_PyUnicode_GET_LENGTH(u) PyUnicode_GET_LENGTH(u)
-  #define __Pyx_PyUnicode_READ_CHAR(u, i) PyUnicode_READ_CHAR(u, i)
-#else
-  #define __Pyx_PyUnicode_GET_LENGTH(u) PyUnicode_GET_SIZE(u)
-  #define __Pyx_PyUnicode_READ_CHAR(u, i) ((Py_UCS4)(PyUnicode_AS_UNICODE(u)[i]))
-#endif
-
-#if PY_MAJOR_VERSION >= 3
-  #define PyBaseString_Type            PyUnicode_Type
-  #define PyStringObject               PyUnicodeObject
-  #define PyString_Type                PyUnicode_Type
-  #define PyString_Check               PyUnicode_Check
-  #define PyString_CheckExact          PyUnicode_CheckExact
-#endif
-
-#if PY_VERSION_HEX < 0x02060000
-  #define PyBytesObject                PyStringObject
-  #define PyBytes_Type                 PyString_Type
-  #define PyBytes_Check                PyString_Check
-  #define PyBytes_CheckExact           PyString_CheckExact
-  #define PyBytes_FromString           PyString_FromString
-  #define PyBytes_FromStringAndSize    PyString_FromStringAndSize
-  #define PyBytes_FromFormat           PyString_FromFormat
-  #define PyBytes_DecodeEscape         PyString_DecodeEscape
-  #define PyBytes_AsString             PyString_AsString
-  #define PyBytes_AsStringAndSize      PyString_AsStringAndSize
-  #define PyBytes_Size                 PyString_Size
-  #define PyBytes_AS_STRING            PyString_AS_STRING
-  #define PyBytes_GET_SIZE             PyString_GET_SIZE
-  #define PyBytes_Repr                 PyString_Repr
-  #define PyBytes_Concat               PyString_Concat
-  #define PyBytes_ConcatAndDel         PyString_ConcatAndDel
-#endif
-
-#if PY_VERSION_HEX < 0x02060000
-  #define PySet_Check(obj)             PyObject_TypeCheck(obj, &PySet_Type)
-  #define PyFrozenSet_Check(obj)       PyObject_TypeCheck(obj, &PyFrozenSet_Type)
-#endif
-#ifndef PySet_CheckExact
-  #define PySet_CheckExact(obj)        (Py_TYPE(obj) == &PySet_Type)
-#endif
-
-#define __Pyx_TypeCheck(obj, type) PyObject_TypeCheck(obj, (PyTypeObject *)type)
-
-#if PY_MAJOR_VERSION >= 3
-  #define PyIntObject                  PyLongObject
-  #define PyInt_Type                   PyLong_Type
-  #define PyInt_Check(op)              PyLong_Check(op)
-  #define PyInt_CheckExact(op)         PyLong_CheckExact(op)
-  #define PyInt_FromString             PyLong_FromString
-  #define PyInt_FromUnicode            PyLong_FromUnicode
-  #define PyInt_FromLong               PyLong_FromLong
-  #define PyInt_FromSize_t             PyLong_FromSize_t
-  #define PyInt_FromSsize_t            PyLong_FromSsize_t
-  #define PyInt_AsLong                 PyLong_AsLong
-  #define PyInt_AS_LONG                PyLong_AS_LONG
-  #define PyInt_AsSsize_t              PyLong_AsSsize_t
-  #define PyInt_AsUnsignedLongMask     PyLong_AsUnsignedLongMask
-  #define PyInt_AsUnsignedLongLongMask PyLong_AsUnsignedLongLongMask
-#endif
-
-#if PY_MAJOR_VERSION >= 3
-  #define PyBoolObject                 PyLongObject
-#endif
-
-#if PY_VERSION_HEX < 0x03020000
-  typedef long Py_hash_t;
-  #define __Pyx_PyInt_FromHash_t PyInt_FromLong
-  #define __Pyx_PyInt_AsHash_t   PyInt_AsLong
-#else
-  #define __Pyx_PyInt_FromHash_t PyInt_FromSsize_t
-  #define __Pyx_PyInt_AsHash_t   PyInt_AsSsize_t
-#endif
-
-""")
+        code.put(UtilityCode.load_as_string("CModulePreamble", "ModuleSetupCode.c")[1])
 
         code.put("""
 #if PY_MAJOR_VERSION >= 3
@@ -692,49 +518,6 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             code.putln("  #define __Pyx_PyNumber_Divide(x,y)         PyNumber_Divide(x,y)")
             code.putln("  #define __Pyx_PyNumber_InPlaceDivide(x,y)  PyNumber_InPlaceDivide(x,y)")
         code.putln("#endif")
-
-        code.put("""
-#if (PY_MAJOR_VERSION < 3) || (PY_VERSION_HEX >= 0x03010300)
-  #define __Pyx_PySequence_GetSlice(obj, a, b) PySequence_GetSlice(obj, a, b)
-  #define __Pyx_PySequence_SetSlice(obj, a, b, value) PySequence_SetSlice(obj, a, b, value)
-  #define __Pyx_PySequence_DelSlice(obj, a, b) PySequence_DelSlice(obj, a, b)
-#else
-  #define __Pyx_PySequence_GetSlice(obj, a, b) (unlikely(!(obj)) ? \\
-        (PyErr_SetString(PyExc_SystemError, "null argument to internal routine"), (PyObject*)0) : \\
-        (likely((obj)->ob_type->tp_as_mapping) ? (PySequence_GetSlice(obj, a, b)) : \\
-            (PyErr_Format(PyExc_TypeError, "'%.200s' object is unsliceable", (obj)->ob_type->tp_name), (PyObject*)0)))
-  #define __Pyx_PySequence_SetSlice(obj, a, b, value) (unlikely(!(obj)) ? \\
-        (PyErr_SetString(PyExc_SystemError, "null argument to internal routine"), -1) : \\
-        (likely((obj)->ob_type->tp_as_mapping) ? (PySequence_SetSlice(obj, a, b, value)) : \\
-            (PyErr_Format(PyExc_TypeError, "'%.200s' object doesn't support slice assignment", (obj)->ob_type->tp_name), -1)))
-  #define __Pyx_PySequence_DelSlice(obj, a, b) (unlikely(!(obj)) ? \\
-        (PyErr_SetString(PyExc_SystemError, "null argument to internal routine"), -1) : \\
-        (likely((obj)->ob_type->tp_as_mapping) ? (PySequence_DelSlice(obj, a, b)) : \\
-            (PyErr_Format(PyExc_TypeError, "'%.200s' object doesn't support slice deletion", (obj)->ob_type->tp_name), -1)))
-#endif
-
-#if PY_MAJOR_VERSION >= 3
-  #define PyMethod_New(func, self, klass) ((self) ? PyMethod_New(func, self) : PyInstanceMethod_New(func))
-#endif
-
-#if PY_VERSION_HEX < 0x02050000
-  #define __Pyx_GetAttrString(o,n)   PyObject_GetAttrString((o),((char *)(n)))
-  #define __Pyx_SetAttrString(o,n,a) PyObject_SetAttrString((o),((char *)(n)),(a))
-  #define __Pyx_DelAttrString(o,n)   PyObject_DelAttrString((o),((char *)(n)))
-#else
-  #define __Pyx_GetAttrString(o,n)   PyObject_GetAttrString((o),(n))
-  #define __Pyx_SetAttrString(o,n,a) PyObject_SetAttrString((o),(n),(a))
-  #define __Pyx_DelAttrString(o,n)   PyObject_DelAttrString((o),(n))
-#endif
-
-#if PY_VERSION_HEX < 0x02050000
-  #define __Pyx_NAMESTR(n) ((char *)(n))
-  #define __Pyx_DOCSTR(n)  ((char *)(n))
-#else
-  #define __Pyx_NAMESTR(n) (n)
-  #define __Pyx_DOCSTR(n)  (n)
-#endif
-""")
 
         code.putln("")
         self.generate_extern_c_macro_definition(code)
@@ -985,6 +768,9 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         # Generate struct declaration for an extension type's vtable.
         type = entry.type
         scope = type.scope
+
+        self.specialize_fused_types(scope)
+
         if type.vtabstruct_cname:
             code.putln("")
             code.putln(
@@ -1128,7 +914,8 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
 
     def generate_cfunction_declarations(self, env, code, definition):
         for entry in env.cfunc_entries:
-            generate_cfunction_declaration(entry, env, code, definition)
+            if entry.used:
+                generate_cfunction_declaration(entry, env, code, definition)
 
     def generate_variable_definitions(self, env, code):
         for entry in env.var_entries:
@@ -1150,11 +937,11 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
                 scope = type.scope
                 if scope: # could be None if there was an error
                     self.generate_exttype_vtable(scope, code)
-                    self.generate_new_function(scope, code)
+                    self.generate_new_function(scope, code, entry)
                     self.generate_dealloc_function(scope, code)
                     if scope.needs_gc():
-                        self.generate_traverse_function(scope, code)
-                        self.generate_clear_function(scope, code)
+                        self.generate_traverse_function(scope, code, entry)
+                        self.generate_clear_function(scope, code, entry)
                     if scope.defines_any(["__getitem__"]):
                         self.generate_getitem_int_function(scope, code)
                     if scope.defines_any(["__setitem__", "__delitem__"]):
@@ -1194,19 +981,24 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
                 type.declaration_code("p"),
                 type.declaration_code("")))
 
-    def generate_new_function(self, scope, code):
+    def generate_new_function(self, scope, code, cclass_entry):
         tp_slot = TypeSlots.ConstructorSlot("tp_new", '__new__')
         slot_func = scope.mangle_internal("tp_new")
         type = scope.parent_type
         base_type = type.base_type
+
         py_attrs = []
         memviewslice_attrs = []
+        py_buffers = []
         for entry in scope.var_entries:
             if entry.type.is_pyobject:
                 py_attrs.append(entry)
             elif entry.type.is_memoryviewslice:
                 memviewslice_attrs.append(entry)
-        need_self_cast = type.vtabslot_cname or py_attrs or memviewslice_attrs
+            elif entry.type == PyrexTypes.c_py_buffer_type:
+                py_buffers.append(entry)
+
+        need_self_cast = type.vtabslot_cname or py_attrs or memviewslice_attrs or py_buffers
         code.putln("")
         code.putln(
             "static PyObject *%s(PyTypeObject *t, PyObject *a, PyObject *k) {"
@@ -1243,15 +1035,24 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             code.putln("p->%s = %s%s;" % (
                 type.vtabslot_cname,
                 struct_type_cast, type.vtabptr_cname))
+
         for entry in py_attrs:
             if scope.is_internal or entry.name == "__weakref__":
                 # internal classes do not need None inits
                 code.putln("p->%s = 0;" % entry.cname)
             else:
                 code.put_init_var_to_py_none(entry, "p->%s", nanny=False)
+
         for entry in memviewslice_attrs:
             code.putln("p->%s.data = NULL;" % entry.cname)
             code.putln("p->%s.memview = NULL;" % entry.cname)
+
+        for entry in py_buffers:
+            code.putln("p->%s.obj = NULL;" % entry.cname)
+
+        if cclass_entry.cname == '__pyx_memoryviewslice':
+            code.putln("p->from_slice.memview = NULL;")
+
         entry = scope.lookup_here("__new__")
         if entry and entry.is_special:
             if entry.trivial_signature:
@@ -1326,7 +1127,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             code.putln(
                 "}")
 
-    def generate_traverse_function(self, scope, code):
+    def generate_traverse_function(self, scope, code, cclass_entry):
         tp_slot = TypeSlots.GCDependentSlot("tp_traverse")
         slot_func = scope.mangle_internal("tp_traverse")
         base_type = scope.parent_type.base_type
@@ -1336,14 +1137,21 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         code.putln(
             "static int %s(PyObject *o, visitproc v, void *a) {"
                 % slot_func)
+
         py_attrs = []
+        py_buffers = []
         for entry in scope.var_entries:
             if entry.type.is_pyobject and entry.name != "__weakref__":
                 py_attrs.append(entry)
+            if entry.type == PyrexTypes.c_py_buffer_type:
+                py_buffers.append(entry)
+
         if base_type or py_attrs:
             code.putln("int e;")
-        if py_attrs:
+
+        if py_attrs or py_buffers:
             self.generate_self_cast(scope, code)
+
         if base_type:
             # want to call it explicitly if possible so inlining can be performed
             static_call = TypeSlots.get_base_slot_function(scope, tp_slot)
@@ -1355,6 +1163,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
                         "e = %s->tp_traverse(o, v, a); if (e) return e;" %
                             base_type.typeptr_cname)
                 code.putln("}")
+
         for entry in py_attrs:
             var_code = "p->%s" % entry.cname
             code.putln(
@@ -1367,12 +1176,23 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
                             % var_code)
             code.putln(
                     "}")
+
+        for entry in py_buffers:
+            code.putln("if (p->%s.obj) {" % entry.cname)
+            code.putln(    "e = (*v)(p->%s.obj, a); if (e) return e;" % entry.cname)
+            code.putln("}")
+
+        if cclass_entry.cname == '__pyx_memoryviewslice':
+            code.putln("if (p->from_slice.memview) {")
+            code.putln(     "e = (*v)((PyObject *) p->from_slice.memview, a); if (e) return e;")
+            code.putln("}")
+
         code.putln(
                 "return 0;")
         code.putln(
             "}")
 
-    def generate_clear_function(self, scope, code):
+    def generate_clear_function(self, scope, code, cclass_entry):
         tp_slot = TypeSlots.GCDependentSlot("tp_clear")
         slot_func = scope.mangle_internal("tp_clear")
         base_type = scope.parent_type.base_type
@@ -1380,13 +1200,19 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             return # never used
         code.putln("")
         code.putln("static int %s(PyObject *o) {" % slot_func)
+
         py_attrs = []
+        py_buffers = []
         for entry in scope.var_entries:
             if entry.type.is_pyobject and entry.name != "__weakref__":
                 py_attrs.append(entry)
-        if py_attrs:
+            if entry.type == PyrexTypes.c_py_buffer_type:
+                py_buffers.append(entry)
+
+        if py_attrs or py_buffers:
             self.generate_self_cast(scope, code)
             code.putln("PyObject* tmp;")
+
         if base_type:
             # want to call it explicitly if possible so inlining can be performed
             static_call = TypeSlots.get_base_slot_function(scope, tp_slot)
@@ -1396,6 +1222,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
                 code.putln("if (%s->tp_clear) {" % base_type.typeptr_cname)
                 code.putln("%s->tp_clear(o);" % base_type.typeptr_cname)
                 code.putln("}")
+
         for entry in py_attrs:
             name = "p->%s" % entry.cname
             code.putln("tmp = ((PyObject*)%s);" % name)
@@ -1404,6 +1231,13 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             else:
                 code.put_init_to_py_none(name, entry.type, nanny=False)
             code.putln("Py_XDECREF(tmp);")
+
+        for entry in py_buffers:
+            code.putln("Py_CLEAR(p->%s.obj);" % entry.cname)
+
+        if cclass_entry.cname == '__pyx_memoryviewslice':
+            code.putln("__PYX_XDEC_MEMVIEW(&p->from_slice, 1);")
+
         code.putln(
             "return 0;")
         code.putln(
@@ -1800,7 +1634,8 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             "static PyMethodDef %s[] = {" %
                 env.method_table_cname)
         for entry in env.pyfunc_entries:
-            code.put_pymethoddef(entry, ",")
+            if not entry.fused_cfunction:
+                code.put_pymethoddef(entry, ",")
         code.putln(
                 "{0, 0, 0, 0}")
         code.putln(
@@ -1918,7 +1753,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         code.putln("#endif")
         code.put_setup_refcount_context(header3)
 
-        env.use_utility_code(check_binary_version_utility_code)
+        env.use_utility_code(UtilityCode.load("CheckBinaryVersion", "ModuleSetupCode.c"))
         code.putln("if ( __Pyx_check_binary_version() < 0) %s" % code.error_goto(self.pos))
 
         code.putln("%s = PyTuple_New(0); %s" % (Naming.empty_tuple, code.error_goto_if_null(Naming.empty_tuple, self.pos)));
@@ -1926,6 +1761,14 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
 
         code.putln("#ifdef __Pyx_CyFunction_USED")
         code.putln("if (__Pyx_CyFunction_init() < 0) %s" % code.error_goto(self.pos))
+        code.putln("#endif")
+
+        code.putln("#ifdef __Pyx_FusedFunction_USED")
+        code.putln("if (__pyx_FusedFunction_init() < 0) %s" % code.error_goto(self.pos))
+        code.putln("#endif")
+
+        code.putln("#ifdef __Pyx_Generator_USED")
+        code.putln("if (__pyx_Generator_init() < 0) %s" % code.error_goto(self.pos))
         code.putln("#endif")
 
         code.putln("/*--- Library function declarations ---*/")
@@ -1983,6 +1826,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
 
         code.putln("/*--- Function import code ---*/")
         for module in imported_modules:
+            self.specialize_fused_types(module)
             self.generate_c_function_import_code_for_module(module, env, code)
 
         code.putln("/*--- Execution code ---*/")
@@ -2200,6 +2044,18 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             if entry.defined_in_pxd:
                 self.generate_type_import_code(env, entry.type, entry.pos, code)
 
+    def specialize_fused_types(self, pxd_env):
+        """
+        If fused c(p)def functions are defined in an imported pxd, but not
+        used in this implementation file, we still have fused entries and
+        not specialized ones. This method replaces any fused entries with their
+        specialized ones.
+        """
+        for entry in pxd_env.cfunc_entries[:]:
+            if entry.type.is_fused:
+                # This call modifies the cfunc_entries in-place
+                entry.type.get_all_specific_function_types()
+
     def generate_c_variable_import_code_for_module(self, module, env, code):
         # Generate import code for all exported C functions in a cimported module.
         entries = []
@@ -2232,7 +2088,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         # Generate import code for all exported C functions in a cimported module.
         entries = []
         for entry in module.cfunc_entries:
-            if entry.defined_in_pxd:
+            if entry.defined_in_pxd and entry.used:
                 entries.append(entry)
         if entries:
             env.use_utility_code(import_module_utility_code)
@@ -2312,7 +2168,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         else:
             module_name = '__Pyx_BUILTIN_MODULE_NAME'
             if type.name in Code.non_portable_builtins_map:
-                condition, replacement = Code.non_portable_builtins_map[entry.name]
+                condition, replacement = Code.non_portable_builtins_map[type.name]
                 code.putln("#if %s" % condition)
                 code.putln('%s = __Pyx_ImportType(%s, "%s", sizeof(%s), 1); %s' % (
                         type.typeptr_cname,
@@ -2441,7 +2297,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
 
 def generate_cfunction_declaration(entry, env, code, definition):
     from_cy_utility = entry.used and entry.utility_code_definition
-    if entry.inline_func_in_pxd or (not entry.in_cinclude and (definition
+    if entry.used and entry.inline_func_in_pxd or (not entry.in_cinclude and (definition
             or entry.defined_in_pxd or entry.visibility == 'extern' or from_cy_utility)):
         if entry.visibility == 'extern':
             storage_class = "%s " % Naming.extern_c_macro
@@ -3212,26 +3068,3 @@ packed_struct_utility_code = UtilityCode(proto="""
 #define __Pyx_PACKED
 #endif
 """, impl="", proto_block='utility_code_proto_before_types')
-
-check_binary_version_utility_code = UtilityCode(proto="""
-static int __Pyx_check_binary_version(void);
-""", impl="""
-static int __Pyx_check_binary_version(void) {
-    char ctversion[4], rtversion[4];
-    PyOS_snprintf(ctversion, 4, "%d.%d", PY_MAJOR_VERSION, PY_MINOR_VERSION);
-    PyOS_snprintf(rtversion, 4, "%s", Py_GetVersion());
-    if (ctversion[0] != rtversion[0] || ctversion[2] != rtversion[2]) {
-        char message[200];
-        PyOS_snprintf(message, sizeof(message),
-                      "compiletime version %s of module '%.100s' "
-                      "does not match runtime version %s",
-                      ctversion, __Pyx_MODULE_NAME, rtversion);
-        #if PY_VERSION_HEX < 0x02050000
-        return PyErr_Warn(NULL, message);
-        #else
-        return PyErr_WarnEx(NULL, message, 1);
-        #endif
-    }
-    return 0;
-}
-""")

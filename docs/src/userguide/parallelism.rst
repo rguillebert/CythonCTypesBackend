@@ -2,15 +2,23 @@
 
 .. py:module:: cython.parallel
 
+.. _parallel:
+
 **********************************
 Using Parallelism
 **********************************
 
 Cython supports native parallelism through the :py:mod:`cython.parallel`
-module. To use this kind of parallelism, the GIL must be released. It
-currently supports OpenMP, but later on more backends might be supported.
+module. To use this kind of parallelism, the GIL must be released
+(see :ref:`Releasing the GIL <nogil>`).
+It currently supports OpenMP, but later on more backends might be supported.
 
-.. function:: prange([start,] stop[, step], nogil=False, schedule=None)
+.. NOTE:: Functionality in this module may only be used from the main thread
+          or parallel regions due to OpenMP restrictions.
+
+__ nogil_
+
+.. function:: prange([start,] stop[, step][, nogil=False][, schedule=None[, chunksize=None]][, num_threads=None])
 
     This function can be used for parallel loops. OpenMP automatically
     starts a thread pool and distributes the work according to the schedule
@@ -36,21 +44,20 @@ currently supports OpenMP, but later on more backends might be supported.
     +=================+======================================================+
     |static           | The iteration space is divided into chunks that are  |
     |                 | approximately equal in size, and at most one chunk   |
-    |                 | is distributed to each thread.                       |
+    |                 | is distributed to each thread, if ``chunksize`` is   |
+    |                 | not given. If ``chunksize`` is specified, iterations |
+    |                 | are distributed cyclically in a static manner with a |
+    |                 | blocksize of ``chunksize``.                          |
     +-----------------+------------------------------------------------------+
     |dynamic          | The iterations are distributed to threads in the team|
-    |                 | as the threads request them, with a chunk size of 1. |
+    |                 | as the threads request them, with a default chunk    |
+    |                 | size of 1.                                           |
     +-----------------+------------------------------------------------------+
     |guided           | The iterations are distributed to threads in the team|
     |                 | as the threads request them. The size of each chunk  |
     |                 | is proportional to the number of unassigned          |
     |                 | iterations divided by the number of threads in the   |
-    |                 | team, decreasing to 1.                               |
-    +-----------------+------------------------------------------------------+
-    |auto             | The decision regarding scheduling is delegated to the|
-    |                 | compiler and/or runtime system. The programmer gives |
-    |                 | the implementation the freedom to choose any possible|
-    |                 | mapping of iterations to threads in the team.        |
+    |                 | team, decreasing to 1 (or ``chunksize`` if given).   |
     +-----------------+------------------------------------------------------+
     |runtime          | The schedule and chunk size are taken from the       |
     |                 | runtime-scheduling-variable, which can be set through|
@@ -58,12 +65,28 @@ currently supports OpenMP, but later on more backends might be supported.
     |                 | ``OMP_SCHEDULE`` environment variable.               |
     +-----------------+------------------------------------------------------+
 
+..    |auto             | The decision regarding scheduling is delegated to the|
+..    |                 | compiler and/or runtime system. The programmer gives |
+..    |                 | the implementation the freedom to choose any possible|
+..    |                 | mapping of iterations to threads in the team.        |
+..    +-----------------+------------------------------------------------------+
+
     The default schedule is implementation defined. For more information consult
-    the OpenMP specification: [#]_.
+    the OpenMP specification [#]_.
+
+    The ``num_threads`` argument indicates how many threads the team should consist of. If not given,
+    OpenMP will decide how many threads to use. Typically this is the number of cores available on
+    the machine. However, this may be controlled through the ``omp_set_num_threads()`` function, or
+    through the ``OMP_NUM_THREADS`` environment variable.
+
+    The ``chunksize`` argument indicates the chunksize to be used for dividing the iterations among threads.
+    This is only valid for ``static``, ``dynamic`` and ``guided`` scheduling, and is optional. Different chunksizes
+    may give substatially different performance results, depending on the schedule, the load balance it provides,
+    the scheduling overhead and the amount of false sharing (if any).
 
     Example with a reduction::
 
-        from cython.parallel import prange, parallel, threadid
+        from cython.parallel import prange
 
         cdef int i
         cdef int sum = 0
@@ -73,17 +96,17 @@ currently supports OpenMP, but later on more backends might be supported.
 
         print sum
 
-    Example with a shared numpy array::
+    Example with a typed memoryview (e.g. a NumPy array)::
 
-        from cython.parallel import *
+        from cython.parallel import prange
 
-        def func(np.ndarray[double] x, double alpha):
+        def func(double[:] x, double alpha):
             cdef Py_ssize_t i
 
             for i in prange(x.shape[0]):
                 x[i] = alpha * x[i]
 
-.. function:: parallel
+.. function:: parallel(num_threads=None)
 
     This directive can be used as part of a ``with`` statement to execute code
     sequences in parallel. This is currently useful to setup thread-local
@@ -94,7 +117,7 @@ currently supports OpenMP, but later on more backends might be supported.
 
     Example with thread-local buffers::
 
-       from cython.parallel import *
+       from cython.parallel import parallel, prange
        from libc.stdlib cimport abort, malloc, free
 
        cdef Py_ssize_t idx, i, n = 100
@@ -149,7 +172,7 @@ enable OpenMP. For gcc this can be done as follows in a setup.py::
 Breaking
 ========
 The parallel with and prange blocks support break, continue and return in
-nogil mode. Additionally, it is valid to use a with gil block inside these
+nogil mode. Additionally, it is valid to use a ``with gil`` block inside these
 blocks, and have exceptions propagate from them.
 However, because the blocks use OpenMP, they can not just be left, so the
 exiting procedure is best-effort. For prange() this means that the loop

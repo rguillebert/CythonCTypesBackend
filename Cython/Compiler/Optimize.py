@@ -32,6 +32,9 @@ try:
 except ImportError:
     basestring = str # Python 3
 
+def load_c_utility(name):
+    return UtilityCode.load_cached(name, "Optimize.c")
+
 class FakePythonEnv(object):
     "A fake environment for creating type test nodes etc."
     nogil = False
@@ -336,7 +339,7 @@ class IterationTransform(Visitor.VisitorTransform):
 
         elif slice_node.type.is_array:
             if slice_node.type.size is None:
-                error(step.pos, "C array iteration requires known end index")
+                error(slice_node.pos, "C array iteration requires known end index")
                 return node
             slice_base = slice_node
             start = None
@@ -1532,7 +1535,7 @@ class EarlyReplaceBuiltinCalls(Visitor.EnvTransform):
         return last_result
 
     def _DISABLED_handle_simple_function_tuple(self, node, pos_args):
-        if len(pos_args) == 0:
+        if not pos_args:
             return ExprNodes.TupleNode(node.pos, args=[], constant_result=())
         # This is a bit special - for iterables (including genexps),
         # Python actually overallocates and resizes a newly created
@@ -1547,12 +1550,12 @@ class EarlyReplaceBuiltinCalls(Visitor.EnvTransform):
         return node
 
     def _handle_simple_function_list(self, node, pos_args):
-        if len(pos_args) == 0:
+        if not pos_args:
             return ExprNodes.ListNode(node.pos, args=[], constant_result=[])
         return self._transform_list_set_genexpr(node, pos_args, ExprNodes.ListNode)
 
     def _handle_simple_function_set(self, node, pos_args):
-        if len(pos_args) == 0:
+        if not pos_args:
             return ExprNodes.SetNode(node.pos, args=[], constant_result=set())
         return self._transform_list_set_genexpr(node, pos_args, ExprNodes.SetNode)
 
@@ -1786,7 +1789,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
                         bound_check_node,
                         ],
                     is_temp = True,
-                    utility_code=bytes_index_utility_code)
+                    utility_code=load_c_utility('bytes_index'))
                 if coerce_node.type is not PyrexTypes.c_char_type:
                     node = node.coerce_to(coerce_node.type, env)
                 return node
@@ -2002,7 +2005,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             self.PyObject_AsDouble_func_type,
             args = pos_args,
             is_temp = node.is_temp,
-            utility_code = pyobject_as_double_utility_code,
+            utility_code = load_c_utility('pyobject_as_double'),
             py_name = "float")
 
     def _handle_simple_function_bool(self, node, pos_args):
@@ -2060,7 +2063,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
                 node.pos, "strlen", self.Pyx_strlen_func_type,
                 args = [arg],
                 is_temp = node.is_temp,
-                utility_code = Builtin.include_string_h_utility_code)
+                utility_code = UtilityCode.load_cached("IncludeStringH", "StringTools.c"))
         elif arg.type.is_pyobject:
             cfunc_name = self._map_to_capi_len_function(arg.type)
             if cfunc_name is None:
@@ -2253,7 +2256,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
                 node, "__Pyx_PyDict_Clear", self.PyDict_Clear_Retval_func_type,
                 'clear', is_unbound_method, args,
                 may_return_none=True, is_temp=True,
-                utility_code=py_dict_clear_utility_code
+                utility_code=load_c_utility('py_dict_clear')
                 ).coerce_to(node.type, self.current_env)
         else:
             return self._substitute_method_call(
@@ -2278,7 +2281,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             args = args,
             may_return_none = True,
             is_temp = node.is_temp,
-            utility_code = append_utility_code
+            utility_code = load_c_utility('append')
             )
 
     PyObject_Pop_func_type = PyrexTypes.CFuncType(
@@ -2302,7 +2305,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
                 args = args,
                 may_return_none = True,
                 is_temp = node.is_temp,
-                utility_code = pop_utility_code
+                utility_code = load_c_utility('pop')
                 )
         elif len(args) == 2:
             index = args[1]
@@ -2321,7 +2324,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
                         args = args,
                         may_return_none = True,
                         is_temp = node.is_temp,
-                        utility_code = pop_index_utility_code
+                        utility_code = load_c_utility("pop_index")
                         )
 
         return node
@@ -2363,7 +2366,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             node, "__Pyx_PyDict_GetItemDefault", self.Pyx_PyDict_GetItem_func_type,
             'get', is_unbound_method, args,
             may_return_none = True,
-            utility_code = dict_getitem_default_utility_code)
+            utility_code = load_c_utility("dict_getitem_default"))
 
     Pyx_PyDict_SetDefault_func_type = PyrexTypes.CFuncType(
         PyrexTypes.py_object_type, [
@@ -2385,7 +2388,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             node, "__Pyx_PyDict_SetDefault", self.Pyx_PyDict_SetDefault_func_type,
             'setdefault', is_unbound_method, args,
             may_return_none = True,
-            utility_code = dict_setdefault_utility_code)
+            utility_code = load_c_utility('dict_setdefault'))
 
 
     ### unicode type methods
@@ -2406,7 +2409,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
         method_name = node.function.attribute
         if method_name == 'istitle':
             # istitle() doesn't directly map to Py_UNICODE_ISTITLE()
-            utility_code = py_unicode_istitle_utility_code
+            utility_code = load_c_utility("py_unicode_istitle")
             function_name = '__Pyx_Py_UNICODE_ISTITLE'
         else:
             utility_code = None
@@ -2759,7 +2762,7 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
                 string_node.pos, "strlen", self.Pyx_strlen_func_type,
                     args = [string_node],
                     is_temp = False,
-                    utility_code = Builtin.include_string_h_utility_code,
+                    utility_code = UtilityCode.load_cached("IncludeStringH", "StringTools.c"),
                     ).coerce_to(PyrexTypes.c_py_ssize_t_type, self.current_env())
         elif start:
             stop = ExprNodes.SubNode(
@@ -2933,146 +2936,9 @@ class OptimizeBuiltinCalls(Visitor.EnvTransform):
             args[arg_index] = args[arg_index].coerce_to_boolean(self.current_env())
 
 
-py_unicode_istitle_utility_code = UtilityCode(
-# Py_UNICODE_ISTITLE() doesn't match unicode.istitle() as the latter
-# additionally allows character that comply with Py_UNICODE_ISUPPER()
-proto = '''
-#if PY_VERSION_HEX < 0x030200A2
-static CYTHON_INLINE int __Pyx_Py_UNICODE_ISTITLE(Py_UNICODE uchar); /* proto */
-#else
-static CYTHON_INLINE int __Pyx_Py_UNICODE_ISTITLE(Py_UCS4 uchar); /* proto */
-#endif
-''',
-impl = '''
-#if PY_VERSION_HEX < 0x030200A2
-static CYTHON_INLINE int __Pyx_Py_UNICODE_ISTITLE(Py_UNICODE uchar) {
-#else
-static CYTHON_INLINE int __Pyx_Py_UNICODE_ISTITLE(Py_UCS4 uchar) {
-#endif
-    return Py_UNICODE_ISTITLE(uchar) || Py_UNICODE_ISUPPER(uchar);
-}
-''')
+unicode_tailmatch_utility_code = load_c_utility('unicode_tailmatch')
 
-unicode_tailmatch_utility_code = UtilityCode(
-    # Python's unicode.startswith() and unicode.endswith() support a
-    # tuple of prefixes/suffixes, whereas it's much more common to
-    # test for a single unicode string.
-proto = '''
-static int __Pyx_PyUnicode_Tailmatch(PyObject* s, PyObject* substr, \
-Py_ssize_t start, Py_ssize_t end, int direction);
-''',
-impl = '''
-static int __Pyx_PyUnicode_Tailmatch(PyObject* s, PyObject* substr,
-                                     Py_ssize_t start, Py_ssize_t end, int direction) {
-    if (unlikely(PyTuple_Check(substr))) {
-        int result;
-        Py_ssize_t i;
-        for (i = 0; i < PyTuple_GET_SIZE(substr); i++) {
-            result = PyUnicode_Tailmatch(s, PyTuple_GET_ITEM(substr, i),
-                                         start, end, direction);
-            if (result) {
-                return result;
-            }
-        }
-        return 0;
-    }
-    return PyUnicode_Tailmatch(s, substr, start, end, direction);
-}
-''',
-)
-
-bytes_tailmatch_utility_code = UtilityCode(
-proto="""
-static int __Pyx_PyBytes_Tailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
-                                   Py_ssize_t end, int direction);
-""",
-impl = """
-static int __Pyx_PyBytes_SingleTailmatch(PyObject* self, PyObject* arg, Py_ssize_t start,
-                                         Py_ssize_t end, int direction)
-{
-    const char* self_ptr = PyBytes_AS_STRING(self);
-    Py_ssize_t self_len = PyBytes_GET_SIZE(self);
-    const char* sub_ptr;
-    Py_ssize_t sub_len;
-    int retval;
-
-#if PY_VERSION_HEX >= 0x02060000
-    Py_buffer view;
-    view.obj = NULL;
-#endif
-
-    if ( PyBytes_Check(arg) ) {
-        sub_ptr = PyBytes_AS_STRING(arg);
-        sub_len = PyBytes_GET_SIZE(arg);
-    }
-#if PY_MAJOR_VERSION < 3
-    // Python 2.x allows mixing unicode and str
-    else if ( PyUnicode_Check(arg) ) {
-        return PyUnicode_Tailmatch(self, arg, start, end, direction);
-    }
-#endif
-    else {
-#if PY_VERSION_HEX < 0x02060000
-        if (unlikely(PyObject_AsCharBuffer(arg, &sub_ptr, &sub_len)))
-            return -1;
-#else
-        if (unlikely(PyObject_GetBuffer(self, &view, PyBUF_SIMPLE) == -1))
-            return -1;
-        sub_ptr = (const char*) view.buf;
-        sub_len = view.len;
-#endif
-    }
-
-    if (end > self_len)
-        end = self_len;
-    else if (end < 0)
-        end += self_len;
-    if (end < 0)
-        end = 0;
-    if (start < 0)
-        start += self_len;
-    if (start < 0)
-        start = 0;
-
-    if (direction > 0) {
-        /* endswith */
-        if (end-sub_len > start)
-            start = end - sub_len;
-    }
-
-    if (start + sub_len <= end)
-        retval = !memcmp(self_ptr+start, sub_ptr, sub_len);
-    else
-        retval = 0;
-
-#if PY_VERSION_HEX >= 0x02060000
-    if (view.obj)
-        PyBuffer_Release(&view);
-#endif
-
-    return retval;
-}
-
-static int __Pyx_PyBytes_Tailmatch(PyObject* self, PyObject* substr, Py_ssize_t start,
-                                   Py_ssize_t end, int direction)
-{
-    if (unlikely(PyTuple_Check(substr))) {
-        int result;
-        Py_ssize_t i;
-        for (i = 0; i < PyTuple_GET_SIZE(substr); i++) {
-            result = __Pyx_PyBytes_SingleTailmatch(self, PyTuple_GET_ITEM(substr, i),
-                                                   start, end, direction);
-            if (result) {
-                return result;
-            }
-        }
-        return 0;
-    }
-
-    return __Pyx_PyBytes_SingleTailmatch(self, substr, start, end, direction);
-}
-
-""")
+bytes_tailmatch_utility_code = load_c_utility('bytes_tailmatch')
 
 str_tailmatch_utility_code = UtilityCode(
 proto = '''
@@ -3094,243 +2960,6 @@ static CYTHON_INLINE int __Pyx_PyStr_Tailmatch(PyObject* self, PyObject* arg, Py
 }
 ''',
 requires=[unicode_tailmatch_utility_code, bytes_tailmatch_utility_code]
-)
-
-dict_getitem_default_utility_code = UtilityCode(
-proto = '''
-static PyObject* __Pyx_PyDict_GetItemDefault(PyObject* d, PyObject* key, PyObject* default_value) {
-    PyObject* value;
-#if PY_MAJOR_VERSION >= 3
-    value = PyDict_GetItemWithError(d, key);
-    if (unlikely(!value)) {
-        if (unlikely(PyErr_Occurred()))
-            return NULL;
-        value = default_value;
-    }
-    Py_INCREF(value);
-#else
-    if (PyString_CheckExact(key) || PyUnicode_CheckExact(key) || PyInt_CheckExact(key)) {
-        /* these presumably have safe hash functions */
-        value = PyDict_GetItem(d, key);
-        if (unlikely(!value)) {
-            value = default_value;
-        }
-        Py_INCREF(value);
-    } else {
-        PyObject *m;
-        m = __Pyx_GetAttrString(d, "get");
-        if (!m) return NULL;
-        value = PyObject_CallFunctionObjArgs(m, key,
-            (default_value == Py_None) ? NULL : default_value, NULL);
-        Py_DECREF(m);
-    }
-#endif
-    return value;
-}
-''',
-impl = ""
-)
-
-dict_setdefault_utility_code = UtilityCode(
-proto = """
-static PyObject *__Pyx_PyDict_SetDefault(PyObject *, PyObject *, PyObject *); /*proto*/
-""",
-impl = '''
-static PyObject *__Pyx_PyDict_SetDefault(PyObject *d, PyObject *key, PyObject *default_value) {
-    PyObject* value;
-#if PY_MAJOR_VERSION >= 3
-    value = PyDict_GetItemWithError(d, key);
-    if (unlikely(!value)) {
-        if (unlikely(PyErr_Occurred()))
-            return NULL;
-        if (unlikely(PyDict_SetItem(d, key, default_value) == -1))
-            return NULL;
-        value = default_value;
-    }
-    Py_INCREF(value);
-#else
-    if (PyString_CheckExact(key) || PyUnicode_CheckExact(key) || PyInt_CheckExact(key)) {
-        /* these presumably have safe hash functions */
-        value = PyDict_GetItem(d, key);
-        if (unlikely(!value)) {
-            if (unlikely(PyDict_SetItem(d, key, default_value) == -1))
-                return NULL;
-            value = default_value;
-        }
-        Py_INCREF(value);
-    } else {
-        PyObject *m;
-        m = __Pyx_GetAttrString(d, "setdefault");
-        if (!m) return NULL;
-        value = PyObject_CallFunctionObjArgs(m, key, default_value, NULL);
-        Py_DECREF(m);
-    }
-#endif
-    return value;
-}
-''')
-
-append_utility_code = UtilityCode(
-proto = """
-static CYTHON_INLINE PyObject* __Pyx_PyObject_Append(PyObject* L, PyObject* x) {
-    if (likely(PyList_CheckExact(L))) {
-        if (PyList_Append(L, x) < 0) return NULL;
-        Py_INCREF(Py_None);
-        return Py_None; /* this is just to have an accurate signature */
-    }
-    else {
-        PyObject *r, *m;
-        m = __Pyx_GetAttrString(L, "append");
-        if (!m) return NULL;
-        r = PyObject_CallFunctionObjArgs(m, x, NULL);
-        Py_DECREF(m);
-        return r;
-    }
-}
-""",
-impl = ""
-)
-
-
-pop_utility_code = UtilityCode(
-proto = """
-static CYTHON_INLINE PyObject* __Pyx_PyObject_Pop(PyObject* L) {
-#if PY_VERSION_HEX >= 0x02040000
-    if (likely(PyList_CheckExact(L))
-            /* Check that both the size is positive and no reallocation shrinking needs to be done. */
-            && likely(PyList_GET_SIZE(L) > (((PyListObject*)L)->allocated >> 1))) {
-        Py_SIZE(L) -= 1;
-        return PyList_GET_ITEM(L, PyList_GET_SIZE(L));
-    }
-#if PY_VERSION_HEX >= 0x02050000
-    else if (Py_TYPE(L) == (&PySet_Type)) {
-        return PySet_Pop(L);
-    }
-#endif
-#endif
-    return PyObject_CallMethod(L, (char*)"pop", NULL);
-}
-""",
-impl = ""
-)
-
-pop_index_utility_code = UtilityCode(
-proto = """
-static PyObject* __Pyx_PyObject_PopIndex(PyObject* L, Py_ssize_t ix);
-""",
-impl = """
-static PyObject* __Pyx_PyObject_PopIndex(PyObject* L, Py_ssize_t ix) {
-    PyObject *r, *m, *t, *py_ix;
-#if PY_VERSION_HEX >= 0x02040000
-    if (likely(PyList_CheckExact(L))) {
-        Py_ssize_t size = PyList_GET_SIZE(L);
-        if (likely(size > (((PyListObject*)L)->allocated >> 1))) {
-            if (ix < 0) {
-                ix += size;
-            }
-            if (likely(0 <= ix && ix < size)) {
-                Py_ssize_t i;
-                PyObject* v = PyList_GET_ITEM(L, ix);
-                Py_SIZE(L) -= 1;
-                size -= 1;
-                for(i=ix; i<size; i++) {
-                    PyList_SET_ITEM(L, i, PyList_GET_ITEM(L, i+1));
-                }
-                return v;
-            }
-        }
-    }
-#endif
-    py_ix = t = NULL;
-    m = __Pyx_GetAttrString(L, "pop");
-    if (!m) goto bad;
-    py_ix = PyInt_FromSsize_t(ix);
-    if (!py_ix) goto bad;
-    t = PyTuple_New(1);
-    if (!t) goto bad;
-    PyTuple_SET_ITEM(t, 0, py_ix);
-    py_ix = NULL;
-    r = PyObject_CallObject(m, t);
-    Py_DECREF(m);
-    Py_DECREF(t);
-    return r;
-bad:
-    Py_XDECREF(m);
-    Py_XDECREF(t);
-    Py_XDECREF(py_ix);
-    return NULL;
-}
-"""
-)
-
-
-py_dict_clear_utility_code = UtilityCode(
-proto = '''
-static CYTHON_INLINE PyObject* __Pyx_PyDict_Clear(PyObject* d) {
-    PyDict_Clear(d);
-    Py_INCREF(Py_None);
-    return Py_None;
-}
-''')
-
-
-pyobject_as_double_utility_code = UtilityCode(
-proto = '''
-static double __Pyx__PyObject_AsDouble(PyObject* obj); /* proto */
-
-#define __Pyx_PyObject_AsDouble(obj) \\
-    ((likely(PyFloat_CheckExact(obj))) ? \\
-     PyFloat_AS_DOUBLE(obj) : __Pyx__PyObject_AsDouble(obj))
-''',
-impl='''
-static double __Pyx__PyObject_AsDouble(PyObject* obj) {
-    PyObject* float_value;
-    if (Py_TYPE(obj)->tp_as_number && Py_TYPE(obj)->tp_as_number->nb_float) {
-        return PyFloat_AsDouble(obj);
-    } else if (PyUnicode_CheckExact(obj) || PyBytes_CheckExact(obj)) {
-#if PY_MAJOR_VERSION >= 3
-        float_value = PyFloat_FromString(obj);
-#else
-        float_value = PyFloat_FromString(obj, 0);
-#endif
-    } else {
-        PyObject* args = PyTuple_New(1);
-        if (unlikely(!args)) goto bad;
-        PyTuple_SET_ITEM(args, 0, obj);
-        float_value = PyObject_Call((PyObject*)&PyFloat_Type, args, 0);
-        PyTuple_SET_ITEM(args, 0, 0);
-        Py_DECREF(args);
-    }
-    if (likely(float_value)) {
-        double value = PyFloat_AS_DOUBLE(float_value);
-        Py_DECREF(float_value);
-        return value;
-    }
-bad:
-    return (double)-1;
-}
-'''
-)
-
-
-bytes_index_utility_code = UtilityCode(
-proto = """
-static CYTHON_INLINE char __Pyx_PyBytes_GetItemInt(PyObject* unicode, Py_ssize_t index, int check_bounds); /* proto */
-""",
-impl = """
-static CYTHON_INLINE char __Pyx_PyBytes_GetItemInt(PyObject* bytes, Py_ssize_t index, int check_bounds) {
-    if (check_bounds) {
-        if (unlikely(index >= PyBytes_GET_SIZE(bytes)) |
-            ((index < 0) & unlikely(index < -PyBytes_GET_SIZE(bytes)))) {
-            PyErr_Format(PyExc_IndexError, "string index out of range");
-            return -1;
-        }
-    }
-    if (index < 0)
-        index += PyBytes_GET_SIZE(bytes);
-    return PyBytes_AS_STRING(bytes)[index];
-}
-"""
 )
 
 
@@ -3360,8 +2989,18 @@ class ConstantFolding(Visitor.VisitorTransform, SkipDeclarations):
       literal nodes at each step.  Non-literal nodes are never merged
       into a single node.
     """
+
+    def __init__(self, reevaluate=False):
+        """
+        The reevaluate argument specifies whether constant values that were
+        previously computed should be recomputed.
+        """
+        super(ConstantFolding, self).__init__()
+        self.reevaluate = reevaluate
+
     def _calculate_const(self, node):
-        if node.constant_result is not ExprNodes.constant_value_not_set:
+        if (not self.reevaluate and
+                node.constant_result is not ExprNodes.constant_value_not_set):
             return
 
         # make sure we always set the value

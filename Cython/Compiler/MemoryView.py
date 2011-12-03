@@ -1,11 +1,9 @@
 from Errors import CompileError, error
 import ExprNodes
-from ExprNodes import IntNode, NoneNode, IntBinopNode, NameNode, AttributeNode
-from Visitor import CythonTransform
+from ExprNodes import IntNode, NameNode, AttributeNode
 import Options
-from Code import UtilityCode
+from Code import UtilityCode, TempitaUtilityCode
 from UtilityCode import CythonUtilityCode
-from PyrexTypes import py_object_type, cython_memoryview_ptr_type
 import Buffer
 import PyrexTypes
 
@@ -14,6 +12,7 @@ STOP_ERR = "Axis specification only allowed in the 'step' slot."
 STEP_ERR = "Step must be omitted, 1, or a valid specifier."
 BOTH_CF_ERR = "Cannot specify an array that is both C and Fortran contiguous."
 INVALID_ERR = "Invalid axis specification."
+NOT_CIMPORTED_ERR = "Variable was not cimported from cython.view"
 EXPR_ERR = "no expressions allowed in axis spec, only names and literals."
 CF_ERR = "Invalid axis specification for a C/Fortran contiguous array."
 ERR_UNINITIALIZED = ("Cannot check if memoryview %s is initialized without the "
@@ -130,9 +129,6 @@ def get_buf_flags(specs):
         return memview_strided_access
 
 
-def use_cython_array(env):
-    env.use_utility_code(cython_array_utility_code)
-
 def src_conforms_to_dst(src, dst):
     '''
     returns True if src conforms to dst, False otherwise.
@@ -171,16 +167,18 @@ def valid_memslice_dtype(dtype):
 
     return (
         dtype.is_error or
-        dtype.is_ptr or
+        # Pointers are not valid (yet)
+        # (dtype.is_ptr and valid_memslice_dtype(dtype.base_type)) or
         dtype.is_numeric or
         dtype.is_struct or
         dtype.is_pyobject or
+        dtype.is_fused or # accept this as it will be replaced by specializations later
         (dtype.is_typedef and valid_memslice_dtype(dtype.typedef_base_type))
     )
 
 def validate_memslice_dtype(pos, dtype):
     if not valid_memslice_dtype(dtype):
-        error(pos, "Invalid base type for memoryview slice")
+        error(pos, "Invalid base type for memoryview slice: %s" % dtype)
 
 
 class MemoryViewSliceBufferEntry(Buffer.BufferEntry):
@@ -562,9 +560,10 @@ class CopyFuncUtilCode(object):
             copy_contents_name=copy_contents_name
         )
 
-        _, copy_code = UtilityCode.load_as_string("MemviewSliceCopyTemplate",
-                                                  from_file="MemoryView_C.c",
-                                                  context=C)
+        _, copy_code = TempitaUtilityCode.load_as_string(
+                    "MemviewSliceCopyTemplate",
+                    from_file="MemoryView_C.c",
+                    context=C)
         code.put(copy_code)
 
 
@@ -899,8 +898,13 @@ def _resolve_NameNode(env, node):
         resolved_name = env.lookup(node.name).name
     except AttributeError:
         raise CompileError(node.pos, INVALID_ERR)
+
     viewscope = env.global_scope().context.cython_scope.viewscope
-    return viewscope.lookup(resolved_name)
+    entry = viewscope.lookup(resolved_name)
+    if entry is None:
+        raise CompileError(node.pos, NOT_CIMPORTED_ERR)
+
+    return entry
 
 def _resolve_AttributeNode(env, node):
     path = []
@@ -934,8 +938,15 @@ def load_memview_cy_utility(util_code_name, context=None, **kwargs):
                                   context=context, **kwargs)
 
 def load_memview_c_utility(util_code_name, context=None, **kwargs):
-    return UtilityCode.load(util_code_name, "MemoryView_C.c",
-                            context=context, **kwargs)
+    if context is None:
+        return UtilityCode.load(util_code_name, "MemoryView_C.c", **kwargs)
+    else:
+        return TempitaUtilityCode.load(util_code_name, "MemoryView_C.c",
+                                       context=context, **kwargs)
+
+def use_cython_array_utility_code(env):
+    env.global_scope().context.cython_scope.lookup('array_cwrapper').used = True
+    env.use_utility_code(cython_array_utility_code)
 
 context = {
     'memview_struct_name': memview_objstruct_cname,

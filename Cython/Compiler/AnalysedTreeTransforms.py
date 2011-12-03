@@ -1,11 +1,9 @@
-from Cython.Compiler.Visitor import VisitorTransform, ScopeTrackingTransform, TreeVisitor
-from Nodes import StatListNode, SingleAssignmentNode, CFuncDefNode
-from ExprNodes import DictNode, DictItemNode, NameNode, UnicodeNode, NoneNode, \
-                      ExprNode, AttributeNode, ModuleRefNode, DocstringRefNode
+from Visitor import ScopeTrackingTransform
+from Nodes import StatListNode, SingleAssignmentNode, CFuncDefNode, DefNode
+from ExprNodes import DictNode, DictItemNode, NameNode, UnicodeNode
 from PyrexTypes import py_object_type
 from Builtin import dict_type
 from StringEncoding import EncodedString
-import Naming
 import Symtab
 
 class AutoTestDictTransform(ScopeTrackingTransform):
@@ -63,7 +61,7 @@ class AutoTestDictTransform(ScopeTrackingTransform):
         return node
 
     def visit_FuncDefNode(self, node):
-        if not node.doc:
+        if not node.doc or (isinstance(node, DefNode) and node.fused_py_func):
             return node
         if not self.cdef_docstrings:
             if isinstance(node, CFuncDefNode) and not node.py_func:

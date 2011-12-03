@@ -40,6 +40,12 @@ cdef int[:, ::view.contiguous, ::view.indirect_contiguous] a6
 #cdef int[::view.generic_contiguous, ::view.contiguous] a7
 #cdef int[::view.contiguous, ::view.generic_contiguous] a8
 
+ctypedef int *intp
+cdef intp[:, :] myarray
+
+cdef int[:] a10 = <int[:10]> object()
+cdef int[:] a11 = <int[:5.4]> <int *> 1
+
 # These are VALID
 cdef int[::view.indirect_contiguous, ::view.contiguous] a9
 
@@ -56,9 +62,12 @@ _ERRORS = u'''
 20:22: Invalid axis specification.
 21:25: Invalid axis specification.
 22:22: no expressions allowed in axis spec, only names and literals.
-25:51: Memoryview 'object[::contiguous, :]' not conformable to memoryview 'object[:, ::contiguous]'.
+25:51: Memoryview 'object[::1, :]' not conformable to memoryview 'object[:, ::1]'.
 28:36: Different base types for memoryviews (int, Python object)
 31:9: Dimension may not be contiguous
 37:9: Only one direct contiguous axis may be specified.
 38:9:Only dimensions 3 and 2 may be contiguous and direct
+44:10: Invalid base type for memoryview slice: intp
+46:35: Can only create cython.array from pointer or array
+47:24: Cannot assign type 'double' to 'Py_ssize_t'
 '''

@@ -5,7 +5,6 @@ import sys
 import re
 import gc
 import locale
-import codecs
 import shutil
 import time
 import unittest
@@ -116,9 +115,13 @@ def get_openmp_compiler_flags(language):
     # For some reason, cc can be e.g. 'gcc -pthread'
     cc = cc.split()[0]
 
+    # Force english output
+    env = os.environ.copy()
+    env['LC_MESSAGES'] = 'C'
+
     matcher = re.compile(r"gcc version (\d+\.\d+)").search
     try:
-        p = subprocess.Popen([cc, "-v"], stderr=subprocess.PIPE)
+        p = subprocess.Popen([cc, "-v"], stderr=subprocess.PIPE, env=env)
     except EnvironmentError:
         # Be compatible with Python 3
         warnings.warn("Unable to find the %s compiler: %s: %s" %
@@ -717,6 +720,7 @@ def run_forked_test(result, run_func, test_name, fork=True):
         gc.collect()
         return
 
+    module_name = test_name.split()[-1]
     # fork to make sure we do not keep the tested module loaded
     result_handle, result_file = tempfile.mkstemp()
     os.close(result_handle)
@@ -971,7 +975,7 @@ def collect_doctests(path, module_prefix, suite, selectors):
                 '#' in filename and not
                 filename.startswith('.') and not
                 filename in blacklist)
-    import doctest, types
+    import doctest
     for dirpath, dirnames, filenames in os.walk(path):
         for dir in list(dirnames):
             if not package_matches(dir):
@@ -1265,8 +1269,8 @@ def get_version():
     full_version = cython_version
     top = os.path.dirname(os.path.abspath(__file__))
     if os.path.exists(os.path.join(top, '.git')):
+        old_dir = os.getcwd()
         try:
-            old_dir = os.getcwd()
             os.chdir(top)
             head_commit = subprocess_output(['git', 'rev-parse', 'HEAD']).strip()
             version_commit = subprocess_output(['git', 'rev-parse', cython_version]).strip()
@@ -1371,6 +1375,8 @@ def main():
                       help="working directory")
     parser.add_option("--work-dir", dest="work_dir", default=os.path.join(os.getcwd(), 'BUILD'),
                       help="working directory")
+    parser.add_option("--cython-dir", dest="cython_dir", default=os.getcwd(),
+                      help="Cython installation directory (default: use local source version)")
     parser.add_option("--debug", dest="for_debugging", default=False, action="store_true",
                       help="configure for easier use with a debugger (e.g. gdb)")
     parser.add_option("--pyximport-py", dest="pyximport_py", default=False, action="store_true",
@@ -1384,6 +1390,7 @@ def main():
     if sys.version_info[0] >= 3:
         options.doctests = False
         if options.with_cython:
+            sys.path.insert(0, options.cython_dir)
             try:
                 # try if Cython is installed in a Py3 version
                 import Cython.Compiler.Main
@@ -1477,7 +1484,6 @@ def main():
             if selector.startswith('bugs'):
                 test_bugs = True
 
-    import re
     selectors = [ string_selector(r) for r in cmd_args ]
     if not selectors:
         selectors = [ lambda x, tags=None: True ]

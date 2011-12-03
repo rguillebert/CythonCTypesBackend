@@ -4,7 +4,6 @@
 #
 
 import os, sys, re, codecs
-from Cython import Tempita
 
 def replace_suffix(path, newsuf):
     base, _ = os.path.splitext(path)
@@ -216,3 +215,22 @@ def long_literal(value):
     if isinstance(value, basestring):
         value = str_to_number(value)
     return not -2**31 <= value < 2**31
+
+# all() and any() are new in 2.5
+try:
+    # Make sure to bind them on the module, as they will be accessed as
+    # attributes
+    all = all
+    any = any
+except NameError:
+    def all(items):
+        for item in items:
+            if not item:
+                return False
+        return True
+
+    def any(items):
+        for item in items:
+            if item:
+                return True
+        return False

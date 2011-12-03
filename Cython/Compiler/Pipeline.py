@@ -5,7 +5,7 @@ import Errors
 import DebugFlags
 import Options
 from Visitor import CythonTransform
-from Errors import PyrexError, CompileError, InternalError, AbortError, error
+from Errors import CompileError, InternalError, AbortError
 
 #
 # Really small pipeline stages
@@ -62,17 +62,25 @@ def inject_pxd_code_stage_factory(context):
         return module_node
     return inject_pxd_code_stage
 
-def use_utility_code_definitions(scope, target):
+def use_utility_code_definitions(scope, target, seen=None):
+    if seen is None:
+        seen = set()
+
     for entry in scope.entries.itervalues():
+        if entry in seen:
+            continue
+
+        seen.add(entry)
         if entry.used and entry.utility_code_definition:
             target.use_utility_code(entry.utility_code_definition)
             for required_utility in entry.utility_code_definition.requires:
                 target.use_utility_code(required_utility)
         elif entry.as_module:
-            use_utility_code_definitions(entry.as_module, target)
+            use_utility_code_definitions(entry.as_module, target, seen)
 
 def inject_utility_code_stage_factory(context):
     def inject_utility_code_stage(module_node):
+        use_utility_code_definitions(context.cython_scope, module_node.scope)
         added = []
         # Note: the list might be extended inside the loop (if some utility code
         # pulls in other utility code, explicitly or implicitly)
@@ -117,14 +125,14 @@ def create_pipeline(context, mode, exclude_classes=()):
     from Visitor import PrintTree
     from ParseTreeTransforms import WithTransform, NormalizeTree, PostParse, PxdPostParse
     from ParseTreeTransforms import ForwardDeclareTypes, AnalyseDeclarationsTransform
-    from ParseTreeTransforms import AnalyseExpressionsTransform
+    from ParseTreeTransforms import AnalyseExpressionsTransform, FindInvalidUseOfFusedTypes
     from ParseTreeTransforms import CreateClosureClasses, MarkClosureVisitor, DecoratorTransform
     from ParseTreeTransforms import InterpretCompilerDirectives, TransformBuiltinMethods
     from ParseTreeTransforms import ExpandInplaceOperators, ParallelRangeTransform
     from TypeInference import MarkAssignments, MarkOverflowingArithmetic
     from ParseTreeTransforms import AdjustDefByDirectives, AlignFunctionDefinitions
     from ParseTreeTransforms import RemoveUnreachableCode, GilCheck
-    from FlowControl import CreateControlFlowGraph
+    from FlowControl import ControlFlowAnalysis
     from AnalysedTreeTransforms import AutoTestDictTransform
     from AutoDocTransforms import EmbedSignature
     from Optimize import FlattenInListTransform, SwitchTransform, IterationTransform
@@ -133,7 +141,6 @@ def create_pipeline(context, mode, exclude_classes=()):
     from Optimize import DropRefcountingTransform
     from Buffer import IntroduceBufferAuxiliaryVars
     from ModuleNode import check_c_declarations, check_c_declarations_pxd
-    from ModuleNode import check_c_declarations
 
 
     if mode == 'pxd':
@@ -172,13 +179,14 @@ def create_pipeline(context, mode, exclude_classes=()):
         EarlyReplaceBuiltinCalls(context),  ## Necessary?
         TransformBuiltinMethods(context),  ## Necessary?
         MarkAssignments(context),
-        CreateControlFlowGraph(context),
+        ControlFlowAnalysis(context),
         RemoveUnreachableCode(context),
         # MarkAssignments(context),
         MarkOverflowingArithmetic(context),
         IntroduceBufferAuxiliaryVars(context),
         _check_c_declarations,
         AnalyseExpressionsTransform(context),
+        FindInvalidUseOfFusedTypes(context),
         CreateClosureClasses(context),  ## After all lookups and type inference
         ExpandInplaceOperators(context),
         OptimizeBuiltinCalls(context),  ## Necessary?

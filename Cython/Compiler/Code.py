@@ -1,18 +1,19 @@
-# cython: language_level = 2, py2_import=True
+# cython: language_level = 2
 #
 #   Code output module
 #
 
 import cython
-cython.declare(re=object, Naming=object, Options=object, StringEncoding=object,
+cython.declare(os=object, re=object, operator=object,
+               Naming=object, Options=object, StringEncoding=object,
                Utils=object, SourceDescriptor=object, StringIOTree=object,
-               DebugFlags=object, none_or_sub=object, basestring=object)
+               DebugFlags=object, basestring=object)
 
 import os
 import re
-import codecs
+import sys
+import operator
 
-import glob
 import Naming
 import Options
 import StringEncoding
@@ -20,13 +21,13 @@ from Cython import Utils
 from Scanning import SourceDescriptor
 from Cython.StringIOTree import StringIOTree
 import DebugFlags
-import Errors
-from Cython import Tempita as tempita
 
 try:
     from __builtin__ import basestring
 except ImportError:
     from builtins import str as basestring
+
+KEYWORDS_MUST_BE_BYTES = sys.version_info < (2,7)
 
 
 non_portable_builtins_map = {
@@ -50,110 +51,161 @@ def get_utility_dir():
     return os.path.join(Cython_dir, "Utility")
 
 class UtilityCodeBase(object):
+    """
+    Support for loading utility code from a file.
+
+    Code sections in the file can be specified as follows:
+
+        ##### MyUtility.proto #####
+
+        ##### MyUtility #####
+        #@requires: MyOtherUtility
+
+    for prototypes and implementation respectively.  For non-python or
+    -cython files backslashes should be used instead.  5 to 30 comment
+    characters may be used on either side.
+
+    If the @cname decorator is not used and this is a CythonUtilityCode,
+    one should pass in the 'name' keyword argument to be used for name
+    mangling of such entries.
+    """
 
     is_cython_utility = False
 
     _utility_cache = {}
 
-    # @classmethod
-    def _add_utility(cls, utility, type, lines, begin_lineno):
-        if utility:
-            # Remember line numbers as least until after templating
-            code = '\n' * begin_lineno + ''.join(lines)
+    @classmethod
+    def _add_utility(cls, utility, type, lines, begin_lineno, tags=None):
+        if utility is None:
+            return
 
-            if type == 'Proto':
-                utility[0] = code
-            else:
-                utility[1] = code
+        # remember correct line numbers as least until after templating
+        code = '\n' * begin_lineno + '\n'.join(lines)
 
-    _add_utility = classmethod(_add_utility)
+        if type == 'Proto':
+            utility[0] = code
+        else:
+            utility[1] = code
+        if tags:
+            all_tags = utility[2]
+            for name, values in tags.items():
+                if KEYWORDS_MUST_BE_BYTES:
+                    name = name.encode('ASCII')
+                all_tags.setdefault(name, set()).update(values)
 
-    # @classmethod
+    @classmethod
     def load_utilities_from_file(cls, path):
         utilities = cls._utility_cache.get(path)
         if utilities:
             return utilities
 
         filename = os.path.join(get_utility_dir(), path)
-
         _, ext = os.path.splitext(path)
         if ext in ('.pyx', '.py', '.pxd', '.pxi'):
             comment = '#'
+            replace_comments = re.compile(r'^\s*#.*').sub
         else:
             comment = '/'
-
-        regex = r'%s{5,30}\s*((\w|\.)+)\s*%s{5,30}' % (comment, comment)
-        utilities = {}
-        lines = []
-
-        utility = type = None
-        begin_lineno = 0
+            replace_comments = re.compile(r'^\s*//.*|^\s*/\*[^*]*\*/').sub
+        match_special = re.compile(
+            (r'^%(C)s{5,30}\s*((?:\w|\.)+)\s*%(C)s{5,30}|'
+             r'^%(C)s+@(requires)\s*:\s*((?:\w|\.)+)' # add more tag names here at need
+                ) % {'C':comment}).match
 
         f = Utils.open_source_file(filename, encoding='UTF-8')
         try:
-            all_lines = f.readlines() # py23
+            all_lines = f.readlines()
         finally:
             f.close()
 
+        utilities = {}
+        lines = []
+        tags = {}
+        utility = type = None
+        begin_lineno = 0
+
         for lineno, line in enumerate(all_lines):
-            m = re.search(regex, line)
+            m = match_special(line)
             if m:
-                cls._add_utility(utility, type, lines, begin_lineno)
+                if m.group(1):
+                    name = m.group(1)
+                    cls._add_utility(utility, type, lines, begin_lineno, tags)
 
-                begin_lineno = lineno + 1
-                name = m.group(1)
-                if name.endswith(".proto"):
-                    name = name[:-6]
-                    type = 'Proto'
+                    begin_lineno = lineno + 1
+                    del lines[:]
+                    tags.clear()
+
+                    if name.endswith(".proto"):
+                        name = name[:-6]
+                        type = 'Proto'
+                    else:
+                        type = 'Code'
+                    utility = utilities.setdefault(name, [None, None, {}])
                 else:
-                    type = 'Code'
-
-                utility = utilities.setdefault(name, [None, None])
-                utilities[name] = utility
-
-                lines = []
+                    tags.setdefault(m.group(2), set()).add(m.group(3))
+                    lines.append('') # keep line number correct
             else:
-                lines.append(line)
+                lines.append(replace_comments('', line).rstrip())
 
-        if not utility:
+        if utility is None:
             raise ValueError("Empty utility code file")
 
         # Don't forget to add the last utility code
-        cls._add_utility(utility, type, lines, begin_lineno)
-
-        f.close()
+        cls._add_utility(utility, type, lines, begin_lineno, tags)
 
         cls._utility_cache[path] = utilities
         return utilities
 
-    load_utilities_from_file = classmethod(load_utilities_from_file)
-
-    # @classmethod
-    def load(cls, util_code_name, from_file=None, context=None, **kwargs):
+    @classmethod
+    def load(cls, util_code_name, from_file=None, **kwargs):
         """
-        Load a utility code from a file specified by from_file (relative to
-        Cython/Utility) and name util_code_name. If from_file is not given,
-        load it from the file util_code_name.*. There should be only one file
-        matched by this pattern.
-
-        Utilities in the file can be specified as follows:
-
-            ##### MyUtility.proto #####
-            ##### MyUtility #####
-
-        for prototypes and implementation respectively. For non-python or
-        -cython files /-es should be used instead. 5 to 30 pound signs may be
-        used on either side.
-
-        If context is given, the utility is considered a tempita template.
-        The context dict (which may be empty) will be unpacked to form
-        all the variables in the template.
-
-        If the @cname decorator is not used and this is a CythonUtilityCode,
-        one should pass in the 'name' keyword argument to be used for name
-        mangling of such entries.
+        Load utility code from a file specified by from_file (relative to
+        Cython/Utility) and name util_code_name.  If from_file is not given,
+        load it from the file util_code_name.*.  There should be only one
+        file matched by this pattern.
         """
-        proto, impl = cls.load_as_string(util_code_name, from_file, context)
+        if from_file is None:
+            utility_dir = get_utility_dir()
+            prefix = util_code_name + '.'
+            try:
+                listing = os.listdir(utility_dir)
+            except OSError:
+                # XXX the code below assumes as 'zipimport.zipimporter' instance
+                # XXX should be easy to generalize, but too lazy right now to write it
+                import zipfile
+                global __loader__
+                loader = __loader__
+                archive = loader.archive
+                fileobj = zipfile.ZipFile(archive)
+                listing = [ os.path.basename(name)
+                            for name in fileobj.namelist()
+                            if os.path.join(archive, name).startswith(utility_dir)]
+                fileobj.close()
+            files = [ os.path.join(utility_dir, filename)
+                      for filename in listing
+                      if filename.startswith(prefix) ]
+            if not files:
+                raise ValueError("No match found for utility code " + util_code_name)
+            if len(files) > 1:
+                raise ValueError("More than one filename match found for utility code " + util_code_name)
+            from_file = files[0]
+
+        utilities = cls.load_utilities_from_file(from_file)
+        proto, impl, tags = utilities[util_code_name]
+
+        if tags:
+            orig_kwargs = kwargs.copy()
+            for name, values in tags.items():
+                if name in kwargs:
+                    continue
+                # only pass lists when we have to: most argument expect one value or None
+                if name == 'requires':
+                    values = [ cls.load(dep, from_file, **orig_kwargs) for dep in values ]
+                elif not values:
+                    values = None
+                elif len(values) == 1:
+                    values = values[0]
+                kwargs[name] = values
 
         if proto is not None:
             kwargs['proto'] = proto
@@ -165,66 +217,40 @@ class UtilityCodeBase(object):
 
         if 'file' not in kwargs and from_file:
             kwargs['file'] = from_file
-
         return cls(**kwargs)
 
-    load = classmethod(load)
+    @classmethod
+    def load_cached(cls, utility_code_name, from_file=None, _cache={}):
+        """
+        Calls .load(), but using a per-type cache based on utility name and file name.
+        """
+        key = (cls, from_file, utility_code_name)
+        try:
+            return _cache[key]
+        except KeyError:
+            pass
+        code = _cache[key] = cls.load(utility_code_name, from_file)
+        return code
 
-    # @classmethod
-    def load_as_string(cls, util_code_name, from_file=None, context=None):
+    @classmethod
+    def load_as_string(cls, util_code_name, from_file=None, **kwargs):
         """
         Load a utility code as a string. Returns (proto, implementation)
         """
-        if from_file is None:
-            files = glob.glob(os.path.join(get_utility_dir(),
-                                           util_code_name + '.*'))
-            if len(files) != 1:
-                raise ValueError("Need exactly one utility file")
-
-            from_file, = files
-
-        utilities = cls.load_utilities_from_file(from_file)
-
-        proto, impl = utilities[util_code_name]
-        if context is not None:
-            proto = sub_tempita(proto, context, from_file, util_code_name)
-            impl = sub_tempita(impl, context, from_file, util_code_name)
-
-        if cls.is_cython_utility:
-            # Remember line numbers
-            return proto, impl
-
+        util = cls.load(util_code_name, from_file, **kwargs)
+        proto, impl = util.proto, util.impl
         return proto and proto.lstrip(), impl and impl.lstrip()
 
-    load_as_string = classmethod(load_as_string)
-
-    def none_or_sub(self, s, context, tempita):
+    def format_code(self, code_string, replace_empty_lines=re.compile(r'\n\n+').sub):
         """
-        Format a string in this utility code with context. If None, do nothing.
+        Format a code section for output.
         """
-        if s is None:
-            return None
-
-        if tempita:
-            return sub_tempita(s, context, self.file, self.name)
-
-        return s % context
+        if code_string:
+            code_string = replace_empty_lines('\n', code_string.strip()) + '\n\n'
+        return code_string
 
     def __str__(self):
         return "<%s(%s)" % (type(self).__name__, self.name)
-
-
-def sub_tempita(s, context, file, name):
-    "Run tempita on string s with context context."
-    if not s:
-        return None
-
-    if file:
-        context['__name'] = "%s:%s" % (file, name)
-    elif name:
-        context['__name'] = name
-
-    return tempita.sub(s, **context)
 
 
 class UtilityCode(UtilityCodeBase):
@@ -260,16 +286,36 @@ class UtilityCode(UtilityCodeBase):
         self.name = name
         self.file = file
 
+    def __hash__(self):
+        return hash((self.proto, self.impl))
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if not isinstance(other, type(self)):
+            return False
+
+        self_proto = getattr(self, 'proto', None)
+        other_proto = getattr(other, 'proto', None)
+        return (self_proto, self.impl) == (other_proto, other.impl)
+
     def get_tree(self):
         pass
 
+    def none_or_sub(self, s, context):
+        """
+        Format a string in this utility code with context. If None, do nothing.
+        """
+        if s is None:
+            return None
+        return s % context
 
-    def specialize(self, pyrex_type=None, tempita=False, **data):
+    def specialize(self, pyrex_type=None, **data):
         # Dicts aren't hashable...
         if pyrex_type is not None:
             data['type'] = pyrex_type.declaration_code('')
             data['type_name'] = pyrex_type.specialization_name()
-        key = data.items(); key.sort(); key = tuple(key)
+        key = tuple(sorted(data.items()))
         try:
             return self._cache[key]
         except KeyError:
@@ -279,10 +325,10 @@ class UtilityCode(UtilityCodeBase):
                 requires = [r.specialize(data) for r in self.requires]
 
             s = self._cache[key] = UtilityCode(
-                    self.none_or_sub(self.proto, data, tempita),
-                    self.none_or_sub(self.impl, data, tempita),
-                    self.none_or_sub(self.init, data, tempita),
-                    self.none_or_sub(self.cleanup, data, tempita),
+                    self.none_or_sub(self.proto, data),
+                    self.none_or_sub(self.impl, data),
+                    self.none_or_sub(self.init, data),
+                    self.none_or_sub(self.cleanup, data),
                     requires,
                     self.proto_block)
 
@@ -294,36 +340,50 @@ class UtilityCode(UtilityCodeBase):
             for dependency in self.requires:
                 output.use_utility_code(dependency)
         if self.proto:
-            output[self.proto_block].put(self.proto)
+            output[self.proto_block].put(self.format_code(self.proto))
         if self.impl:
-            output['utility_code_def'].put(self.impl)
+            output['utility_code_def'].put(self.format_code(self.impl))
         if self.init:
             writer = output['init_globals']
             if isinstance(self.init, basestring):
-                writer.put(self.init)
+                writer.put(self.format_code(self.init))
             else:
                 self.init(writer, output.module_pos)
         if self.cleanup and Options.generate_cleanup_code:
             writer = output['cleanup_globals']
             if isinstance(self.cleanup, basestring):
-                writer.put(self.cleanup)
+                writer.put(self.format_code(self.cleanup))
             else:
                 self.cleanup(writer, output.module_pos)
 
 
-class ContentHashingUtilityCode(UtilityCode):
-    "UtilityCode that hashes and compares based on self.proto and self.impl"
+def sub_tempita(s, context, file, name):
+    "Run tempita on string s with given context."
+    if not s:
+        return None
 
-    def __hash__(self):
-        return hash((self.proto, self.impl))
+    if file:
+        context['__name'] = "%s:%s" % (file, name)
+    elif name:
+        context['__name'] = name
 
-    def __eq__(self, other):
-        if not isinstance(other, type(self)):
-            return False
+    from Cython.Tempita import sub
+    return sub(s, **context)
 
-        self_proto = getattr(self, 'proto', None)
-        other_proto = getattr(other, 'proto', None)
-        return (self_proto, self.impl) == (other_proto, other.impl)
+class TempitaUtilityCode(UtilityCode):
+    def __init__(self, name=None, proto=None, impl=None, file=None, context=None, **kwargs):
+        proto = sub_tempita(proto, context, file, name)
+        impl = sub_tempita(impl, context, file, name)
+        super(TempitaUtilityCode, self).__init__(
+            proto, impl, name=name, file=file, **kwargs)
+
+    def none_or_sub(self, s, context):
+        """
+        Format a string in this utility code with context. If None, do nothing.
+        """
+        if s is None:
+            return None
+        return sub_tempita(s, context, self.file, self.name)
 
 
 class LazyUtilityCode(UtilityCodeBase):
@@ -643,9 +703,16 @@ class StringConst(object):
             prefix = Naming.interned_str_prefix
         else:
             prefix = Naming.py_const_prefix
-        pystring_cname = "%s%s_%s" % (
+
+        if encoding_key:
+            encoding_prefix = '_%s' % encoding_key
+        else:
+            encoding_prefix = ''
+
+        pystring_cname = "%s%s%s_%s" % (
             prefix,
             (is_str and 's') or (is_unicode and 'u') or 'b',
+            encoding_prefix,
             self.cname[len(Naming.const_prefix):])
 
         py_string = PyStringConst(
@@ -1156,13 +1223,7 @@ class GlobalState(object):
 
 
 def funccontext_property(name):
-    try:
-        import operator
-        attribute_of = operator.attrgetter(name)
-    except:
-        def attribute_of(o):
-            return getattr(o, name)
-
+    attribute_of = operator.attrgetter(name)
     def get(self):
         return attribute_of(self.funcstate)
     def set(self, value):
@@ -1388,10 +1449,12 @@ class CCodeWriter(object):
             self.level += 1
 
     def putln_tempita(self, code, **context):
-        self.putln(tempita.sub(code, **context))
+        from Cython.Tempita import sub
+        self.putln(sub(code, **context))
 
     def put_tempita(self, code, **context):
-        self.put(tempita.sub(code, **context))
+        from Cython.Tempita import sub
+        self.put(sub(code, **context))
 
     def increase_indent(self):
         self.level = self.level + 1

@@ -51,6 +51,7 @@ lambda_func_prefix = pyrex_prefix + "lambda_"
 module_is_main   = pyrex_prefix + "module_is_main_"
 
 args_cname       = pyrex_prefix + "args"
+generator_cname  = pyrex_prefix + "generator"
 sent_value_cname = pyrex_prefix + "sent_value"
 pykwdlist_cname  = pyrex_prefix + "pyargnames"
 obj_base_cname   = pyrex_prefix + "base"
@@ -92,6 +93,7 @@ enc_scope_cname  = pyrex_prefix + "enc_scope"
 frame_cname      = pyrex_prefix + "frame"
 frame_code_cname = pyrex_prefix + "frame_code"
 binding_cfunc    = pyrex_prefix + "binding_PyCFunctionType"
+fused_func_prefix = pyrex_prefix + 'fuse_'
 quick_temp_cname = pyrex_prefix + "temp" # temp variable for quick'n'dirty temping
 
 genexpr_id_ref = 'genexpr'

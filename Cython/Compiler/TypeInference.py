@@ -1,4 +1,4 @@
-from Errors import error, warning, message, warn_once, InternalError
+from Errors import error, message
 import ExprNodes
 import Nodes
 import Builtin
@@ -196,10 +196,8 @@ class MarkAssignments(CythonTransform):
         self.parallel_block_stack.append(node)
 
         nested = nested or len(self.parallel_block_stack) > 2
-        if not self.parallel_errors and nested:
-
-            error(node.pos,
-                  "Parallel nesting not supported due to bugs in gcc 4.5")
+        if not self.parallel_errors and nested and not node.is_prange:
+            error(node.pos, "Only prange() may be nested")
             self.parallel_errors = True
 
         if node.is_prange:
@@ -372,7 +370,7 @@ class SimpleAssignmentTypeInferer(object):
             while ready_to_infer:
                 entry = ready_to_infer.pop()
                 types = [expr.infer_type(scope) for expr in entry.assignments]
-                if types:
+                if types and Utils.all(types):
                     entry.type = spanning_type(types, entry.might_overflow)
                 else:
                     # FIXME: raise a warning?
