@@ -6,6 +6,8 @@ import DebugFlags
 import Options
 from Visitor import CythonTransform
 from Errors import CompileError, InternalError, AbortError
+import os
+import codecs
 
 #
 # Really small pipeline stages
