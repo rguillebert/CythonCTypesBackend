@@ -7,9 +7,15 @@ u'''
 >>> assignmvs()
 '''
 
-from cython.view cimport memoryview
-from cython cimport array, PyBUF_C_CONTIGUOUS
+from cython.view cimport memoryview, array
 from cython cimport view
+
+from cpython.object cimport PyObject
+from cpython.ref cimport Py_INCREF, Py_DECREF
+cimport cython
+
+cdef extern from "Python.h":
+    cdef int PyBUF_C_CONTIGUOUS
 
 include "mockbuffers.pxi"
 
@@ -60,6 +66,73 @@ cdef cdg():
     cdef double[::1] dmv = array((10,), itemsize=sizeof(double), format='d')
     dmv = array((10,), itemsize=sizeof(double), format='d')
 
+cdef class TestExcClassExternalDtype(object):
+    cdef ext_dtype[:, :] arr_float
+    cdef td_h_double[:, :] arr_double
+
+    def __init__(self):
+        self.arr_float = array((10, 10), itemsize=sizeof(ext_dtype), format='f')
+        self.arr_float[:] = 0.0
+        self.arr_float[4, 4] = 2.0
+
+        self.arr_double = array((10, 10), itemsize=sizeof(td_h_double), format='d')
+        self.arr_double[:] = 0.0
+        self.arr_double[4, 4] = 2.0
+
+def test_external_dtype():
+    """
+    >>> test_external_dtype()
+    2.0
+    2.0
+    """
+    cdef TestExcClassExternalDtype obj = TestExcClassExternalDtype()
+    print obj.arr_float[4, 4]
+    print obj.arr_double[4, 4]
+
+
+cdef class ExtClassMockedAttr(object):
+    cdef int[:, :] arr
+
+    def __init__(self):
+        self.arr = IntMockBuffer("self.arr", range(100), (10, 8))
+        self.arr[:] = 0
+        self.arr[4, 4] = 2
+
+cdef int[:, :] _coerce_to_temp():
+    cdef ExtClassMockedAttr obj = ExtClassMockedAttr()
+    return obj.arr
+
+def test_coerce_to_temp():
+    """
+    >>> test_coerce_to_temp()
+    acquired self.arr
+    released self.arr
+    <BLANKLINE>
+    acquired self.arr
+    released self.arr
+    <BLANKLINE>
+    acquired self.arr
+    released self.arr
+    2
+    <BLANKLINE>
+    acquired self.arr
+    released self.arr
+    2
+    <BLANKLINE>
+    acquired self.arr
+    released self.arr
+    2
+    """
+    _coerce_to_temp()[:] = 0
+    print
+    _coerce_to_temp()[...] = 0
+    print
+    print _coerce_to_temp()[4, 4]
+    print
+    print _coerce_to_temp()[..., 4][4]
+    print
+    print _coerce_to_temp()[4][4]
+
 cdef float[:,::1] global_mv = array((10,10), itemsize=sizeof(float), format='f')
 global_mv = array((10,10), itemsize=sizeof(float), format='f')
 cdef object global_obj
@@ -82,9 +155,6 @@ def call():
     cdg()
     f = ExtClass()
     pf = PyClass()
-
-cdef int[:] func():
-    pass
 
 cdef ExtClass get_ext_obj():
     print 'get_ext_obj called'
@@ -127,6 +197,29 @@ def test_cdef_attribute():
 
     print ExtClass().mview
 
+@cython.boundscheck(False)
+def test_nogil_unbound_localerror():
+    """
+    >>> test_nogil_unbound_localerror()
+    Traceback (most recent call last):
+        ...
+    UnboundLocalError: local variable 'm' referenced before assignment
+    """
+    cdef int[:] m
+    with nogil:
+        m[0] = 10
+
+def test_nogil_oob():
+    """
+    >>> test_nogil_oob()
+    Traceback (most recent call last):
+        ...
+    IndexError: Out of bounds on buffer access (axis 0)
+    """
+    cdef int[5] a
+    cdef int[:] m = a
+    with nogil:
+        m[5] = 1
 
 def basic_struct(MyStruct[:] mslice):
     """
@@ -652,12 +745,22 @@ def test_indirect_slicing(arg):
     (5, 3, 2)
     0 0 -1
     58
+    56
+    58
+    58
+    58
+    58
     released A
 
     >>> test_indirect_slicing(IntMockBuffer("A", shape_9_14_21_list, shape=(9, 14, 21)))
     acquired A
     (5, 14, 3)
     0 16 -1
+    2412
+    2410
+    2412
+    2412
+    2412
     2412
     released A
     """
@@ -669,6 +772,11 @@ def test_indirect_slicing(arg):
     print_int_offsets(*b.suboffsets)
 
     print b[4, 2, 1]
+    print b[..., 0][4, 2]
+    print b[..., 1][4, 2]
+    print b[..., 1][4][2]
+    print b[4][2][1]
+    print b[4, 2][1]
 
 def test_direct_slicing(arg):
     """
@@ -749,7 +857,8 @@ def test_oob():
 
 def test_acquire_memoryview():
     """
-    >>> test_acquire_memoryview()
+    Segfaulting in 3.2?
+    >> test_acquire_memoryview()
     acquired A
     22
     <MemoryView of 'IntMockBuffer' object>

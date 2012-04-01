@@ -67,9 +67,9 @@ old_style_globals = False
 cimport_from_pyx = False
 
 
-# max # of dims for buffers -- set to same value as max # of dims for numpy
-# arrays.
-buffer_max_dims = 32
+# max # of dims for buffers -- set lower than number of dimensions in numpy, as
+# slices are passed by value and involve a lot of copying
+buffer_max_dims = 8
 
 # Declare compiler directives
 directive_defaults = {
@@ -105,6 +105,9 @@ directive_defaults = {
     'warn.unused': False,
     'warn.unused_arg': False,
     'warn.unused_result': False,
+
+# optimizations
+    'optimize.inline_defnode_calls': False,
 
 # remove unreachable code
     'remove_unreachable': True,

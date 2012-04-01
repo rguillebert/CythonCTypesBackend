@@ -510,7 +510,7 @@ class MemoryViewSliceType(PyrexType):
 
         return True
 
-    def declare_attribute(self, attribute, env):
+    def declare_attribute(self, attribute, env, pos):
         import MemoryView, Options
 
         scope = self.scope
@@ -518,24 +518,24 @@ class MemoryViewSliceType(PyrexType):
         if attribute == 'shape':
             scope.declare_var('shape',
                     c_array_type(c_py_ssize_t_type,
-                        Options.buffer_max_dims),
-                    None,
+                                 Options.buffer_max_dims),
+                    pos,
                     cname='shape',
                     is_cdef=1)
 
         elif attribute == 'strides':
             scope.declare_var('strides',
                     c_array_type(c_py_ssize_t_type,
-                        Options.buffer_max_dims),
-                    None,
+                                 Options.buffer_max_dims),
+                    pos,
                     cname='strides',
                     is_cdef=1)
 
         elif attribute == 'suboffsets':
             scope.declare_var('suboffsets',
                     c_array_type(c_py_ssize_t_type,
-                        Options.buffer_max_dims),
-                    None,
+                                 Options.buffer_max_dims),
+                    pos,
                     cname='suboffsets',
                     is_cdef=1)
 
@@ -544,40 +544,32 @@ class MemoryViewSliceType(PyrexType):
 
             to_axes_c = [('direct', 'contig')]
             to_axes_f = [('direct', 'contig')]
-            if ndim-1:
+            if ndim - 1:
                 to_axes_c = [('direct', 'follow')]*(ndim-1) + to_axes_c
                 to_axes_f = to_axes_f + [('direct', 'follow')]*(ndim-1)
 
             to_memview_c = MemoryViewSliceType(self.dtype, to_axes_c)
             to_memview_f = MemoryViewSliceType(self.dtype, to_axes_f)
 
-            cython_name_c, cython_name_f = "copy", "copy_fortran"
-            copy_name_c, copy_name_f = (
-                    MemoryView.get_copy_func_name(to_memview_c),
-                    MemoryView.get_copy_func_name(to_memview_f))
-
-
-            for (to_memview, cython_name, copy_name) in ((to_memview_c, cython_name_c, copy_name_c),
-                                                         (to_memview_f, cython_name_f, copy_name_f)):
-
+            for to_memview, cython_name in [(to_memview_c, "copy"),
+                                            (to_memview_f, "copy_fortran")]:
                 entry = scope.declare_cfunction(cython_name,
-                            CFuncType(self,
-                                [CFuncTypeArg("memviewslice", self, None)]),
-                            pos = None,
-                            defining = 1,
-                            cname = copy_name)
+                            CFuncType(self, [CFuncTypeArg("memviewslice", self, None)]),
+                            pos=pos,
+                            defining=1,
+                            cname=MemoryView.copy_c_or_fortran_cname(to_memview))
 
-                entry.utility_code_definition = \
-                        MemoryView.CopyFuncUtilCode(self, to_memview)
+                #entry.utility_code_definition = \
+                env.use_utility_code(MemoryView.get_copy_new_utility(pos, self, to_memview))
 
             MemoryView.use_cython_array_utility_code(env)
 
         elif attribute in ("is_c_contig", "is_f_contig"):
             # is_c_contig and is_f_contig functions
-            for (c_or_f, cython_name) in (('c', 'is_c_contig'), ('fortran', 'is_f_contig')):
+            for (c_or_f, cython_name) in (('c', 'is_c_contig'), ('f', 'is_f_contig')):
 
                 is_contig_name = \
-                        MemoryView.get_is_contig_func_name(c_or_f)
+                        MemoryView.get_is_contig_func_name(c_or_f, self.ndim)
 
                 cfunctype = CFuncType(
                         return_type=c_int_type,
@@ -587,12 +579,12 @@ class MemoryViewSliceType(PyrexType):
 
                 entry = scope.declare_cfunction(cython_name,
                             cfunctype,
-                            pos = None,
-                            defining = 1,
-                            cname = is_contig_name)
+                            pos=pos,
+                            defining=1,
+                            cname=is_contig_name)
 
-                entry.utility_code_definition = \
-                        MemoryView.IsContigFuncUtilCode(c_or_f)
+                entry.utility_code_definition = MemoryView.get_is_contig_utility(
+                                            attribute == 'is_c_contig', self.ndim)
 
         return True
 
@@ -601,10 +593,6 @@ class MemoryViewSliceType(PyrexType):
 
     def can_coerce_to_pyobject(self, env):
         return True
-
-    #def global_init_code(self, entry, code):
-    #    code.putln("%s.data = NULL;" % entry.cname)
-    #    code.putln("%s.memview = NULL;" % entry.cname)
 
     def check_for_null_code(self, cname):
         return cname + '.memview'
@@ -655,8 +643,9 @@ class MemoryViewSliceType(PyrexType):
         to_py_func = "(PyObject *(*)(char *)) " + to_py_func
         from_py_func = "(int (*)(char *, PyObject *)) " + from_py_func
 
-        tup = (obj.result(), self.ndim, to_py_func, from_py_func)
-        return "__pyx_memoryview_fromslice(&%s, %s, %s, %s);" % tup
+        tup = (obj.result(), self.ndim, to_py_func, from_py_func,
+               self.dtype.is_pyobject)
+        return "__pyx_memoryview_fromslice(&%s, %s, %s, %s, %d);" % tup
 
     def dtype_object_conversion_funcs(self, env):
         import MemoryView, Code
@@ -743,6 +732,8 @@ class MemoryViewSliceType(PyrexType):
         if dtype is not self.dtype:
             return MemoryViewSliceType(dtype, self.axes)
 
+    def cast_code(self, expr_code):
+        return expr_code
 
 
 class BufferType(BaseType):
@@ -1672,6 +1663,8 @@ class CFloatType(CNumericType):
     def __init__(self, rank, math_h_modifier = ''):
         CNumericType.__init__(self, rank, 1)
         self.math_h_modifier = math_h_modifier
+        if rank == RANK_FLOAT:
+            self.from_py_function = "__pyx_PyFloat_AsFloat"
 
     def assignable_from_resolved_type(self, src_type):
         return (src_type.is_numeric and not src_type.is_complex) or src_type is error_type
@@ -1831,6 +1824,9 @@ class CComplexType(CNumericType):
     def py_type_name(self):
         return "complex"
 
+    def cast_code(self, expr_code):
+        return expr_code
+
 complex_ops = {
     (1, '-'): 'neg',
     (1, 'zero'): 'is_zero',
@@ -1946,9 +1942,11 @@ static %(type)s __Pyx_PyComplex_As_%(type_name)s(PyObject*);
 impl="""
 static %(type)s __Pyx_PyComplex_As_%(type_name)s(PyObject* o) {
     Py_complex cval;
+#if CYTHON_COMPILING_IN_CPYTHON
     if (PyComplex_CheckExact(o))
         cval = ((PyComplexObject *)o)->cval;
     else
+#endif
         cval = PyComplex_AsCComplex(o);
     return %(type_name)s_from_parts(
                (%(real_type)s)cval.real,
@@ -2510,7 +2508,7 @@ class CFuncType(CType):
     # All but map_with_specific_entries should be called only on functions
     # with fused types (and not on their corresponding specific versions).
 
-    def get_all_specific_permutations(self, fused_types=None):
+    def get_all_specialized_permutations(self, fused_types=None):
         """
         Permute all the types. For every specific instance of a fused type, we
         want all other specific instances of all other fused types.
@@ -2524,9 +2522,9 @@ class CFuncType(CType):
         if fused_types is None:
             fused_types = self.get_fused_types()
 
-        return get_all_specific_permutations(fused_types)
+        return get_all_specialized_permutations(fused_types)
 
-    def get_all_specific_function_types(self):
+    def get_all_specialized_function_types(self):
         """
         Get all the specific function types of this one.
         """
@@ -2541,7 +2539,7 @@ class CFuncType(CType):
         cfunc_entries.remove(self.entry)
 
         result = []
-        permutations = self.get_all_specific_permutations()
+        permutations = self.get_all_specialized_permutations()
 
         for cname, fused_to_specific in permutations:
             new_func_type = self.entry.type.specialize(fused_to_specific)
@@ -2598,7 +2596,20 @@ def get_fused_cname(fused_cname, orig_cname):
     return StringEncoding.EncodedString('%s%s%s' % (Naming.fused_func_prefix,
                                                     fused_cname, orig_cname))
 
-def get_all_specific_permutations(fused_types, id="", f2s=()):
+def unique(somelist):
+    seen = set()
+    result = []
+    for obj in somelist:
+        if obj not in seen:
+            result.append(obj)
+            seen.add(obj)
+
+    return result
+
+def get_all_specialized_permutations(fused_types):
+    return _get_all_specialized_permutations(unique(fused_types))
+
+def _get_all_specialized_permutations(fused_types, id="", f2s=()):
     fused_type, = fused_types[0].get_fused_types()
     result = []
 
@@ -2613,7 +2624,7 @@ def get_all_specific_permutations(fused_types, id="", f2s=()):
             cname = str(newid)
 
         if len(fused_types) > 1:
-            result.extend(get_all_specific_permutations(
+            result.extend(_get_all_specialized_permutations(
                                             fused_types[1:], cname, f2s))
         else:
             result.append((cname, f2s))
@@ -2631,7 +2642,7 @@ def get_specialized_types(type):
         result = type.types
     else:
         result = []
-        for cname, f2s in get_all_specific_permutations(type.get_fused_types()):
+        for cname, f2s in get_all_specialized_permutations(type.get_fused_types()):
             result.append(type.specialize(f2s))
 
     return sorted(result)
@@ -2856,6 +2867,11 @@ class CStructOrUnionType(CType):
                         for x in self.scope.var_entries]
         return max(child_depths) + 1
 
+    def cast_code(self, expr_code):
+        if self.is_struct:
+            return expr_code
+        return super(CStructOrUnionType, self).cast_code(expr_code)
+
 class CppClassType(CType):
     #  name          string
     #  cname         string
@@ -2940,7 +2956,7 @@ class CppClassType(CType):
         if other_type.is_cpp_class:
             if self == other_type:
                 return 1
-            elif self.template_type and self.template_type == other_type.template_type:
+            elif self.template_type and other_type.template_type:
                 if self.templates == other_type.templates:
                     return 1
                 for t1, t2 in zip(self.templates, other_type.templates):
@@ -3141,8 +3157,10 @@ rank_to_type_name = (
     "long double",  # 7
 )
 
-RANK_INT  = list(rank_to_type_name).index('int')
-RANK_LONG = list(rank_to_type_name).index('long')
+_rank_to_type_name = list(rank_to_type_name)
+RANK_INT  = _rank_to_type_name.index('int')
+RANK_LONG = _rank_to_type_name.index('long')
+RANK_FLOAT = _rank_to_type_name.index('float')
 UNSIGNED = 0
 SIGNED = 2
 
@@ -3655,7 +3673,7 @@ static CYTHON_INLINE PyObject * __Pyx_PyInt_FromSize_t(size_t);
 static CYTHON_INLINE size_t __Pyx_PyInt_AsSize_t(PyObject*);
 
 #define __pyx_PyFloat_AsDouble(x) (PyFloat_CheckExact(x) ? PyFloat_AS_DOUBLE(x) : PyFloat_AsDouble(x))
-
+#define __pyx_PyFloat_AsFloat(x) ((float) __pyx_PyFloat_AsDouble(x))
 """ + type_conversion_predeclarations
 
 # Note: __Pyx_PyObject_IsTrue is written to minimize branching.

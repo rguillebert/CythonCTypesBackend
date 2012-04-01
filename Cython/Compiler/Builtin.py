@@ -19,7 +19,7 @@ proto = """
 
 abs_int_utility_code = UtilityCode(
 proto = '''
-#if HAVE_LONG_LONG
+#if HAVE_LONG_LONG && defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 #define __Pyx_abs_int(x) \
     ((sizeof(x) <= sizeof(int)) ? ((unsigned int)abs(x)) : \
      ((sizeof(x) <= sizeof(long)) ? ((unsigned long)labs(x)) : \
@@ -31,39 +31,7 @@ proto = '''
 #define __Pyx_abs_long(x) __Pyx_abs_int(x)
 ''')
 
-iter_next_utility_code = UtilityCode(
-proto = """
-#define __Pyx_PyIter_Next(obj) __Pyx_PyIter_Next2(obj, NULL);
-static CYTHON_INLINE PyObject *__Pyx_PyIter_Next2(PyObject *, PyObject *); /*proto*/
-""",
-# copied from Py3's builtin_next()
-impl = '''
-static CYTHON_INLINE PyObject *__Pyx_PyIter_Next2(PyObject* iterator, PyObject* defval) {
-    PyObject* next;
-    if (unlikely(!PyIter_Check(iterator))) {
-        PyErr_Format(PyExc_TypeError,
-            "%.200s object is not an iterator", iterator->ob_type->tp_name);
-        return NULL;
-    }
-    next = (*(Py_TYPE(iterator)->tp_iternext))(iterator);
-    if (likely(next)) {
-        return next;
-    } else if (defval) {
-        if (PyErr_Occurred()) {
-            if(!PyErr_ExceptionMatches(PyExc_StopIteration))
-                return NULL;
-            PyErr_Clear();
-        }
-        Py_INCREF(defval);
-        return defval;
-    } else if (PyErr_Occurred()) {
-        return NULL;
-    } else {
-        PyErr_SetNone(PyExc_StopIteration);
-        return NULL;
-    }
-}
-''')
+iter_next_utility_code = UtilityCode.load_cached("IterNext", "ObjectHandling.c")
 
 getattr3_utility_code = UtilityCode(
 proto = """

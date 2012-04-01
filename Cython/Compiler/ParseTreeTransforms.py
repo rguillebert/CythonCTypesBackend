@@ -17,6 +17,7 @@ from Cython.Compiler.UtilNodes import LetNode, LetRefNode, ResultRefNode
 from Cython.Compiler.TreeFragment import TreeFragment
 from Cython.Compiler.StringEncoding import EncodedString
 from Cython.Compiler.Errors import error, warning, CompileError, InternalError
+from Cython.Compiler.Code import UtilityCode
 
 import copy
 
@@ -705,7 +706,8 @@ class InterpretCompilerDirectives(CythonTransform, SkipDeclarations):
                   directive[-1] not in self.valid_parallel_directives):
                 error(pos, "No such directive: %s" % full_name)
 
-            self.module_scope.use_utility_code(Nodes.init_threads)
+            self.module_scope.use_utility_code(
+                UtilityCode.load_cached("InitThreads", "ModuleSetupCode.c"))
 
         return result
 
@@ -722,7 +724,8 @@ class InterpretCompilerDirectives(CythonTransform, SkipDeclarations):
                     self.cython_module_names.add(u"cython")
                     self.parallel_directives[
                                     u"cython.parallel"] = node.module_name
-                self.module_scope.use_utility_code(Nodes.init_threads)
+                self.module_scope.use_utility_code(
+                    UtilityCode.load_cached("InitThreads", "ModuleSetupCode.c"))
             elif node.as_name:
                 self.directive_names[node.as_name] = node.module_name[7:]
             else:
@@ -1493,6 +1496,13 @@ if VALUE is not None:
 
             if node.py_func:
                 node.stats.insert(0, node.py_func)
+                node.py_func = self.visit(node.py_func)
+                pycfunc = ExprNodes.PyCFunctionNode.from_defnode(node.py_func,
+                                                                 True)
+                pycfunc = ExprNodes.ProxyNode(pycfunc.coerce_to_temp(env))
+                node.resulting_fused_function = pycfunc
+                node.fused_func_assignment = self._create_assignment(
+                              node.py_func, ExprNodes.CloneNode(pycfunc), env)
         else:
             node.body.analyse_declarations(lenv)
 
@@ -1513,6 +1523,51 @@ if VALUE is not None:
 
         self.seen_vars_stack.pop()
         return node
+
+    def visit_DefNode(self, node):
+        node = self.visit_FuncDefNode(node)
+        env = self.env_stack[-1]
+        if (not isinstance(node, Nodes.DefNode) or
+            node.fused_py_func or node.is_generator_body or
+            not node.needs_assignment_synthesis(env)):
+            return node
+        return [node, self._synthesize_assignment(node, env)]
+
+    def _synthesize_assignment(self, node, env):
+        # Synthesize assignment node and put it right after defnode
+        genv = env
+        while genv.is_py_class_scope or genv.is_c_class_scope:
+            genv = genv.outer_scope
+
+        if genv.is_closure_scope:
+            rhs = node.py_cfunc_node = ExprNodes.InnerFunctionNode(
+                node.pos, def_node=node,
+                pymethdef_cname=node.entry.pymethdef_cname,
+                code_object=ExprNodes.CodeObjectNode(node))
+        else:
+            binding = self.current_directives.get('binding')
+            rhs = ExprNodes.PyCFunctionNode.from_defnode(node, binding)
+
+        if env.is_py_class_scope:
+            rhs.binding = True
+
+        node.is_cyfunction = rhs.binding
+        return self._create_assignment(node, rhs, env)
+
+    def _create_assignment(self, def_node, rhs, env):
+        if def_node.decorators:
+            for decorator in def_node.decorators[::-1]:
+                rhs = ExprNodes.SimpleCallNode(
+                    decorator.pos,
+                    function = decorator.decorator,
+                    args = [rhs])
+
+        assmt = Nodes.SingleAssignmentNode(
+            def_node.pos,
+            lhs=ExprNodes.NameNode(def_node.pos, name=def_node.name),
+            rhs=rhs)
+        assmt.analyse_declarations(env)
+        return assmt
 
     def visit_ScopedExprNode(self, node):
         env = self.env_stack[-1]
@@ -1644,11 +1699,13 @@ if VALUE is not None:
         return node
 
     def visit_CnameDecoratorNode(self, node):
-        self.visitchildren(node)
-
-        if not node.node:
+        child_node = self.visit(node.node)
+        if not child_node:
             return None
-
+        if type(child_node) is list: # Assignment synthesized
+            node.child_node = child_node[0]
+            return [node] + child_node[1:]
+        node.node = child_node
         return node
 
     def create_Property(self, entry):
@@ -1686,6 +1743,7 @@ if VALUE is not None:
 
 
 class AnalyseExpressionsTransform(CythonTransform):
+    # Also handles NumPy
 
     def visit_ModuleNode(self, node):
         self.env_stack = [node.scope]
@@ -1724,9 +1782,21 @@ class AnalyseExpressionsTransform(CythonTransform):
 
         if node.is_fused_index and node.type is not PyrexTypes.error_type:
             node = node.base
-
+        elif node.memslice_ellipsis_noop:
+            # memoryviewslice[...] expression, drop the IndexNode
+            node = node.base
         return node
 
+    def visit_AttributeNode(self, node):
+        self.visitchildren(node)
+
+        type = node.obj.type
+        if type.is_extension_type and type.objstruct_cname == 'PyArrayObject':
+            from NumpySupport import numpy_transform_attribute_node
+            node = numpy_transform_attribute_node(node)
+
+        self.visitchildren(node)
+        return node
 
 class FindInvalidUseOfFusedTypes(CythonTransform):
 
@@ -1964,16 +2034,12 @@ class YieldNodeCollector(TreeVisitor):
         return self.visitchildren(node)
 
     def visit_YieldExprNode(self, node):
-        if self.has_return_value:
-            error(node.pos, "'yield' outside function")
         self.yields.append(node)
         self.visitchildren(node)
 
     def visit_ReturnStatNode(self, node):
         if node.value:
             self.has_return_value = True
-            if self.yields:
-                error(node.pos, "'return' with argument inside generator")
         self.returns.append(node)
 
     def visit_ClassDefNode(self, node):
@@ -2010,6 +2076,8 @@ class MarkClosureVisitor(CythonTransform):
                 return node
             for i, yield_expr in enumerate(collector.yields):
                 yield_expr.label_num = i + 1
+            for retnode in collector.returns:
+                retnode.in_generator = True
 
             gbody = Nodes.GeneratorBodyDefNode(
                 pos=node.pos, name=node.name, body=node.body)
@@ -2064,9 +2132,6 @@ class CreateClosureClasses(CythonTransform):
         return from_closure, in_closure
 
     def create_class_from_scope(self, node, target_module_scope, inner_node=None):
-        # skip generator body
-        if node.is_generator_body:
-            return
         # move local variables into closure
         if node.is_generator:
             for entry in node.local_scope.entries.values():
@@ -2159,6 +2224,10 @@ class CreateClosureClasses(CythonTransform):
             self.path.pop()
         return node
 
+    def visit_GeneratorBodyDefNode(self, node):
+        self.visitchildren(node)
+        return node
+
     def visit_CFuncDefNode(self, node):
         self.visitchildren(node)
         return node
@@ -2223,9 +2292,6 @@ class GilCheck(VisitorTransform):
             # which is wrapped in a StatListNode. Just unpack that.
             node.finally_clause, = node.finally_clause.stats
 
-        if node.state == 'gil':
-            self.seen_with_gil_statement = True
-
         self.visitchildren(node)
         self.nogil = was_nogil
         return node
@@ -2261,24 +2327,14 @@ class GilCheck(VisitorTransform):
 
     def visit_TryFinallyStatNode(self, node):
         """
-        Take care of try/finally statements in nogil code sections. The
-        'try' must contain a 'with gil:' statement somewhere.
+        Take care of try/finally statements in nogil code sections.
         """
         if not self.nogil or isinstance(node, Nodes.GILStatNode):
             return self.visit_Node(node)
 
         node.nogil_check = None
         node.is_try_finally_in_nogil = True
-
-        # First, visit the body and check for errors
-        self.seen_with_gil_statement = False
-        self.visitchildren(node.body)
-
-        if not self.seen_with_gil_statement:
-            error(node.pos, "Cannot use try/finally in nogil sections unless "
-                            "it contains a 'with gil' statement.")
-
-        self.visitchildren(node.finally_clause)
+        self.visitchildren(node)
         return node
 
     def visit_Node(self, node):
@@ -2650,7 +2706,7 @@ class DebugTransform(CythonTransform):
             pf_cname = node.py_func.entry.func_cname
 
         attrs = dict(
-            name=node.entry.name,
+            name=node.entry.name or getattr(node, 'name', '<unknown>'),
             cname=node.entry.func_cname,
             pf_cname=pf_cname,
             qualified_name=node.local_scope.qualified_name,

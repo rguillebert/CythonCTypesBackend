@@ -28,6 +28,24 @@
   #define PY_LONG_LONG LONG_LONG
 #endif
 
+#ifndef Py_HUGE_VAL
+  #define Py_HUGE_VAL HUGE_VAL
+#endif
+
+#ifdef PYPY_VERSION
+#define CYTHON_COMPILING_IN_PYPY 1
+#define CYTHON_COMPILING_IN_CPYTHON 0
+#else
+#define CYTHON_COMPILING_IN_PYPY 0
+#define CYTHON_COMPILING_IN_CPYTHON 1
+#endif
+
+#if CYTHON_COMPILING_IN_PYPY
+  #define __Pyx_PyCFunction_Call PyObject_Call
+#else
+  #define __Pyx_PyCFunction_Call PyCFunction_Call
+#endif
+
 #if PY_VERSION_HEX < 0x02050000
   typedef int Py_ssize_t;
   #define PY_SSIZE_T_MAX INT_MAX
@@ -38,6 +56,9 @@
   #define PyNumber_Index(o)    PyNumber_Int(o)
   #define PyIndex_Check(o)     PyNumber_Check(o)
   #define PyErr_WarnEx(category, message, stacklevel) PyErr_Warn(category, message)
+  #define __PYX_BUILD_PY_SSIZE_T "i"
+#else
+  #define __PYX_BUILD_PY_SSIZE_T "n"
 #endif
 
 #if PY_VERSION_HEX < 0x02060000
@@ -71,17 +92,19 @@
   #define PyBUF_F_CONTIGUOUS (0x0040 | PyBUF_STRIDES)
   #define PyBUF_ANY_CONTIGUOUS (0x0080 | PyBUF_STRIDES)
   #define PyBUF_INDIRECT (0x0100 | PyBUF_STRIDES)
+  #define PyBUF_RECORDS (PyBUF_STRIDES | PyBUF_FORMAT | PyBUF_WRITABLE)
+  #define PyBUF_FULL (PyBUF_INDIRECT | PyBUF_FORMAT | PyBUF_WRITABLE)
 
+  typedef int (*getbufferproc)(PyObject *, Py_buffer *, int);
+  typedef void (*releasebufferproc)(PyObject *, Py_buffer *);
 #endif
 
 #if PY_MAJOR_VERSION < 3
   #define __Pyx_BUILTIN_MODULE_NAME "__builtin__"
-  #define __Pyx_PyIdentifier_FromString(s) PyString_FromString(s)
   #define __Pyx_PyCode_New(a, k, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos) \
           PyCode_New(a, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos)
 #else
   #define __Pyx_BUILTIN_MODULE_NAME "builtins"
-  #define __Pyx_PyIdentifier_FromString(s) PyUnicode_FromString(s)
   #define __Pyx_PyCode_New(a, k, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos) \
           PyCode_New(a, k, l, s, f, code, c, n, v, fv, cell, fn, name, fline, lnos)
 #endif
@@ -217,6 +240,133 @@
   #define __Pyx_DOCSTR(n)  (n)
 #endif
 
+/////////////// ForceInitThreads.proto ///////////////
+
+#ifndef __PYX_FORCE_INIT_THREADS
+  #define __PYX_FORCE_INIT_THREADS 0
+#endif
+
+/////////////// InitThreads.init ///////////////
+
+PyEval_InitThreads();
+
+/////////////// CodeObjectCache.proto ///////////////
+
+typedef struct {
+    int code_line;
+    PyCodeObject* code_object;
+} __Pyx_CodeObjectCacheEntry;
+
+struct __Pyx_CodeObjectCache {
+    int count;
+    int max_count;
+    __Pyx_CodeObjectCacheEntry* entries;
+};
+
+static struct __Pyx_CodeObjectCache __pyx_code_cache = {0,0,NULL};
+
+static int __pyx_bisect_code_objects(__Pyx_CodeObjectCacheEntry* entries, int count, int code_line);
+static PyCodeObject *__pyx_find_code_object(int code_line);
+static void __pyx_insert_code_object(int code_line, PyCodeObject* code_object);
+
+/////////////// CodeObjectCache ///////////////
+// Note that errors are simply ignored in the code below.
+// This is just a cache, if a lookup or insertion fails - so what?
+
+static int __pyx_bisect_code_objects(__Pyx_CodeObjectCacheEntry* entries, int count, int code_line) {
+    int start = 0, mid = 0, end = count - 1;
+    if (end >= 0 && code_line > entries[end].code_line) {
+        return count;
+    }
+    while (start < end) {
+        mid = (start + end) / 2;
+        if (code_line < entries[mid].code_line) {
+            end = mid;
+        } else if (code_line > entries[mid].code_line) {
+             start = mid + 1;
+        } else {
+            return mid;
+        }
+    }
+    if (code_line <= entries[mid].code_line) {
+        return mid;
+    } else {
+        return mid + 1;
+    }
+}
+
+static PyCodeObject *__pyx_find_code_object(int code_line) {
+    PyCodeObject* code_object;
+    int pos;
+    if (unlikely(!code_line) || unlikely(!__pyx_code_cache.entries)) {
+        return NULL;
+    }
+    pos = __pyx_bisect_code_objects(__pyx_code_cache.entries, __pyx_code_cache.count, code_line);
+    if (unlikely(pos >= __pyx_code_cache.count) || unlikely(__pyx_code_cache.entries[pos].code_line != code_line)) {
+        return NULL;
+    }
+    code_object = __pyx_code_cache.entries[pos].code_object;
+    Py_INCREF(code_object);
+    return code_object;
+}
+
+static void __pyx_insert_code_object(int code_line, PyCodeObject* code_object) {
+    int pos, i;
+    __Pyx_CodeObjectCacheEntry* entries = __pyx_code_cache.entries;
+    if (unlikely(!code_line)) {
+        return;
+    }
+    if (unlikely(!entries)) {
+        entries = (__Pyx_CodeObjectCacheEntry*)PyMem_Malloc(64*sizeof(__Pyx_CodeObjectCacheEntry));
+        if (likely(entries)) {
+            __pyx_code_cache.entries = entries;
+            __pyx_code_cache.max_count = 64;
+            __pyx_code_cache.count = 1;
+            entries[0].code_line = code_line;
+            entries[0].code_object = code_object;
+            Py_INCREF(code_object);
+        }
+        return;
+    }
+    pos = __pyx_bisect_code_objects(__pyx_code_cache.entries, __pyx_code_cache.count, code_line);
+    if ((pos < __pyx_code_cache.count) && unlikely(__pyx_code_cache.entries[pos].code_line == code_line)) {
+        PyCodeObject* tmp = entries[pos].code_object;
+        entries[pos].code_object = code_object;
+        Py_DECREF(tmp);
+        return;
+    }
+    if (__pyx_code_cache.count == __pyx_code_cache.max_count) {
+        int new_max = __pyx_code_cache.max_count + 64;
+        entries = (__Pyx_CodeObjectCacheEntry*)PyMem_Realloc(
+            __pyx_code_cache.entries, new_max*sizeof(__Pyx_CodeObjectCacheEntry));
+        if (unlikely(!entries)) {
+            return;
+        }
+        __pyx_code_cache.entries = entries;
+        __pyx_code_cache.max_count = new_max;
+    }
+    for (i=__pyx_code_cache.count; i>pos; i--) {
+        entries[i] = entries[i-1];
+    }
+    entries[pos].code_line = code_line;
+    entries[pos].code_object = code_object;
+    __pyx_code_cache.count++;
+    Py_INCREF(code_object);
+}
+
+/////////////// CodeObjectCache.cleanup ///////////////
+
+  if (__pyx_code_cache.entries) {
+      __Pyx_CodeObjectCacheEntry* entries = __pyx_code_cache.entries;
+      int i, count = __pyx_code_cache.count;
+      __pyx_code_cache.count = 0;
+      __pyx_code_cache.max_count = 0;
+      __pyx_code_cache.entries = NULL;
+      for (i=0; i<count; i++) {
+          Py_DECREF(entries[i].code_object);
+      }
+      PyMem_Free(entries);
+  }
 
 /////////////// CheckBinaryVersion.proto ///////////////
 
@@ -242,3 +392,174 @@ static int __Pyx_check_binary_version(void) {
     }
     return 0;
 }
+
+/////////////// PyIdentifierFromString.proto ///////////////
+
+#if !defined(__Pyx_PyIdentifier_FromString)
+#if PY_MAJOR_VERSION < 3
+  #define __Pyx_PyIdentifier_FromString(s) PyString_FromString(s)
+#else
+  #define __Pyx_PyIdentifier_FromString(s) PyUnicode_FromString(s)
+#endif
+#endif
+
+/////////////// TypeImport.proto ///////////////
+
+static PyTypeObject *__Pyx_ImportType(const char *module_name, const char *class_name, size_t size, int strict);  /*proto*/
+
+/////////////// TypeImport ///////////////
+//@requires: PyIdentifierFromString
+
+#ifndef __PYX_HAVE_RT_ImportType
+#define __PYX_HAVE_RT_ImportType
+static PyTypeObject *__Pyx_ImportType(const char *module_name, const char *class_name,
+    size_t size, int strict)
+{
+    PyObject *py_module = 0;
+    PyObject *result = 0;
+    PyObject *py_name = 0;
+    char warning[200];
+
+    py_module = __Pyx_ImportModule(module_name);
+    if (!py_module)
+        goto bad;
+    py_name = __Pyx_PyIdentifier_FromString(class_name);
+    if (!py_name)
+        goto bad;
+    result = PyObject_GetAttr(py_module, py_name);
+    Py_DECREF(py_name);
+    py_name = 0;
+    Py_DECREF(py_module);
+    py_module = 0;
+    if (!result)
+        goto bad;
+    if (!PyType_Check(result)) {
+        PyErr_Format(PyExc_TypeError,
+            "%s.%s is not a type object",
+            module_name, class_name);
+        goto bad;
+    }
+    if (!strict && (size_t)((PyTypeObject *)result)->tp_basicsize > size) {
+        PyOS_snprintf(warning, sizeof(warning),
+            "%s.%s size changed, may indicate binary incompatibility",
+            module_name, class_name);
+        #if PY_VERSION_HEX < 0x02050000
+        if (PyErr_Warn(NULL, warning) < 0) goto bad;
+        #else
+        if (PyErr_WarnEx(NULL, warning, 0) < 0) goto bad;
+        #endif
+    }
+    else if ((size_t)((PyTypeObject *)result)->tp_basicsize != size) {
+        PyErr_Format(PyExc_ValueError,
+            "%s.%s has the wrong size, try recompiling",
+            module_name, class_name);
+        goto bad;
+    }
+    return (PyTypeObject *)result;
+bad:
+    Py_XDECREF(py_module);
+    Py_XDECREF(result);
+    return NULL;
+}
+#endif
+
+/////////////// ModuleImport.proto ///////////////
+
+static PyObject *__Pyx_ImportModule(const char *name); /*proto*/
+
+/////////////// ModuleImport ///////////////
+//@requires: PyIdentifierFromString
+
+#ifndef __PYX_HAVE_RT_ImportModule
+#define __PYX_HAVE_RT_ImportModule
+static PyObject *__Pyx_ImportModule(const char *name) {
+    PyObject *py_name = 0;
+    PyObject *py_module = 0;
+
+    py_name = __Pyx_PyIdentifier_FromString(name);
+    if (!py_name)
+        goto bad;
+    py_module = PyImport_Import(py_name);
+    Py_DECREF(py_name);
+    return py_module;
+bad:
+    Py_XDECREF(py_name);
+    return 0;
+}
+#endif
+
+/////////////// Refnanny.proto ///////////////
+
+#ifndef CYTHON_REFNANNY
+  #define CYTHON_REFNANNY 0
+#endif
+
+#if CYTHON_REFNANNY
+  typedef struct {
+    void (*INCREF)(void*, PyObject*, int);
+    void (*DECREF)(void*, PyObject*, int);
+    void (*GOTREF)(void*, PyObject*, int);
+    void (*GIVEREF)(void*, PyObject*, int);
+    void* (*SetupContext)(const char*, int, const char*);
+    void (*FinishContext)(void**);
+  } __Pyx_RefNannyAPIStruct;
+  static __Pyx_RefNannyAPIStruct *__Pyx_RefNanny = NULL;
+  static __Pyx_RefNannyAPIStruct *__Pyx_RefNannyImportAPI(const char *modname); /*proto*/
+  #define __Pyx_RefNannyDeclarations void *__pyx_refnanny = NULL;
+#ifdef WITH_THREAD
+  #define __Pyx_RefNannySetupContext(name, acquire_gil) \
+          if (acquire_gil) { \
+              PyGILState_STATE __pyx_gilstate_save = PyGILState_Ensure(); \
+              __pyx_refnanny = __Pyx_RefNanny->SetupContext((name), __LINE__, __FILE__); \
+              PyGILState_Release(__pyx_gilstate_save); \
+          } else { \
+              __pyx_refnanny = __Pyx_RefNanny->SetupContext((name), __LINE__, __FILE__); \
+          }
+#else
+  #define __Pyx_RefNannySetupContext(name, acquire_gil) \
+          __pyx_refnanny = __Pyx_RefNanny->SetupContext((name), __LINE__, __FILE__)
+#endif
+  #define __Pyx_RefNannyFinishContext() \
+          __Pyx_RefNanny->FinishContext(&__pyx_refnanny)
+  #define __Pyx_INCREF(r)  __Pyx_RefNanny->INCREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
+  #define __Pyx_DECREF(r)  __Pyx_RefNanny->DECREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
+  #define __Pyx_GOTREF(r)  __Pyx_RefNanny->GOTREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
+  #define __Pyx_GIVEREF(r) __Pyx_RefNanny->GIVEREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
+  #define __Pyx_XINCREF(r)  do { if((r) != NULL) {__Pyx_INCREF(r); }} while(0)
+  #define __Pyx_XDECREF(r)  do { if((r) != NULL) {__Pyx_DECREF(r); }} while(0)
+  #define __Pyx_XGOTREF(r)  do { if((r) != NULL) {__Pyx_GOTREF(r); }} while(0)
+  #define __Pyx_XGIVEREF(r) do { if((r) != NULL) {__Pyx_GIVEREF(r);}} while(0)
+#else
+  #define __Pyx_RefNannyDeclarations
+  #define __Pyx_RefNannySetupContext(name, acquire_gil)
+  #define __Pyx_RefNannyFinishContext()
+  #define __Pyx_INCREF(r) Py_INCREF(r)
+  #define __Pyx_DECREF(r) Py_DECREF(r)
+  #define __Pyx_GOTREF(r)
+  #define __Pyx_GIVEREF(r)
+  #define __Pyx_XINCREF(r) Py_XINCREF(r)
+  #define __Pyx_XDECREF(r) Py_XDECREF(r)
+  #define __Pyx_XGOTREF(r)
+  #define __Pyx_XGIVEREF(r)
+#endif /* CYTHON_REFNANNY */
+
+#define __Pyx_CLEAR(r)    do { PyObject* tmp = ((PyObject*)(r)); r = NULL; __Pyx_DECREF(tmp);} while(0)
+#define __Pyx_XCLEAR(r)   do { if((r) != NULL) {PyObject* tmp = ((PyObject*)(r)); r = NULL; __Pyx_DECREF(tmp);}} while(0)
+
+/////////////// Refnanny ///////////////
+
+#if CYTHON_REFNANNY
+static __Pyx_RefNannyAPIStruct *__Pyx_RefNannyImportAPI(const char *modname) {
+    PyObject *m = NULL, *p = NULL;
+    void *r = NULL;
+    m = PyImport_ImportModule((char *)modname);
+    if (!m) goto end;
+    p = PyObject_GetAttrString(m, (char *)"RefNannyAPI");
+    if (!p) goto end;
+    r = PyLong_AsVoidPtr(p);
+end:
+    Py_XDECREF(p);
+    Py_XDECREF(m);
+    return (__Pyx_RefNannyAPIStruct *)r;
+}
+#endif /* CYTHON_REFNANNY */

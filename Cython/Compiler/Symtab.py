@@ -156,6 +156,7 @@ class Entry(object):
     from_closure = 0
     is_declared_generic = 0
     is_readonly = 0
+    pyfunc_cname = None
     func_cname = None
     func_modifiers = []
     final_func_cname = None
@@ -291,11 +292,13 @@ class Scope(object):
     def __deepcopy__(self, memo):
         return self
 
-    def merge_in(self, other, merge_unused=True):
+    def merge_in(self, other, merge_unused=True, whitelist=None):
         # Use with care...
-        entries = [(name, entry)
-                       for name, entry in other.entries.iteritems()
-                           if entry.used or merge_unused]
+        entries = []
+        for name, entry in other.entries.iteritems():
+            if not whitelist or name in whitelist:
+                if entry.used or merge_unused:
+                    entries.append((name, entry))
 
         self.entries.update(entries)
 
@@ -411,7 +414,8 @@ class Scope(object):
         return entry
 
     def declare_type(self, name, type, pos,
-            cname = None, visibility = 'private', api = 0, defining = 1, shadow = 0):
+            cname = None, visibility = 'private', api = 0, defining = 1,
+            shadow = 0, template = 0):
         # Add an entry for a type definition.
         if not cname:
             cname = name
@@ -421,7 +425,8 @@ class Scope(object):
         if defining:
             self.type_entries.append(entry)
 
-        type.entry = entry
+        if not template:
+            type.entry = entry
 
         # here we would set as_variable to an object representing this type
         return entry
@@ -1925,10 +1930,10 @@ class CClassScope(ClassScope):
 
         # If the class defined in a pxd, specific entries have not been added.
         # Ensure now that the parent (base) scope has specific entries
-        # Iterate over a copy as get_all_specific_function_types() will mutate
+        # Iterate over a copy as get_all_specialized_function_types() will mutate
         for base_entry in base_scope.cfunc_entries[:]:
             if base_entry.type.is_fused:
-                base_entry.type.get_all_specific_function_types()
+                base_entry.type.get_all_specialized_function_types()
 
         for base_entry in base_scope.cfunc_entries:
             cname = base_entry.cname
@@ -2051,9 +2056,10 @@ class CppClassScope(Scope):
         for entry in self.entries.values():
             if entry.is_type:
                 scope.declare_type(entry.name,
-                                    entry.type.specialize(values),
-                                    entry.pos,
-                                    entry.cname)
+                                   entry.type.specialize(values),
+                                   entry.pos,
+                                   entry.cname,
+                                   template=1)
             else:
 #                scope.declare_var(entry.name,
 #                                    entry.type.specialize(values),

@@ -236,6 +236,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
                     cname = env.mangle(Naming.varptr_prefix, entry.name)
                     h_code.putln("static %s = 0;" %  type.declaration_code(cname))
                     h_code.putln("#define %s (*%s)" % (entry.name, cname))
+            h_code.put(UtilityCode.load_cached("PyIdentifierFromString", "ModuleSetupCode.c").proto)
             h_code.put(import_module_utility_code.impl)
             if api_vars:
                 h_code.put(voidptr_import_utility_code.impl)
@@ -810,8 +811,8 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
             if not method_entry.is_inherited and method_entry.final_func_cname:
                 declaration = method_entry.type.declaration_code(
                     method_entry.final_func_cname)
-                if entry.func_modifiers:
-                    modifiers = "%s " % ' '.join(entry.func_modifiers).upper()
+                if method_entry.func_modifiers:
+                    modifiers = "%s " % ' '.join(method_entry.func_modifiers).upper()
                 else:
                     modifiers = ''
                 code.putln("static %s%s;" % (modifiers, declaration))
@@ -1884,7 +1885,8 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         if Options.generate_cleanup_code >= 3:
             code.putln("/*--- Type import cleanup code ---*/")
             for type, _ in env.types_imported.items():
-                code.putln("Py_DECREF((PyObject *)%s);" % type.typeptr_cname)
+                code.putln("Py_DECREF((PyObject *)%s); %s = 0;" % (
+                        type.typeptr_cname, type.typeptr_cname))
         if Options.cache_builtins:
             code.putln("/*--- Builtin cleanup code ---*/")
             for entry in env.cached_builtins:
@@ -2054,7 +2056,7 @@ class ModuleNode(Nodes.Node, Nodes.BlockNode):
         for entry in pxd_env.cfunc_entries[:]:
             if entry.type.is_fused:
                 # This call modifies the cfunc_entries in-place
-                entry.type.get_all_specific_function_types()
+                entry.type.get_all_specialized_function_types()
 
     def generate_c_variable_import_code_for_module(self, module, env, code):
         # Generate import code for all exported C functions in a cimported module.
@@ -2348,90 +2350,8 @@ static CYTHON_INLINE int __Pyx_StrEq(const char *s1, const char *s2) {
 
 #------------------------------------------------------------------------------------
 
-import_module_utility_code = UtilityCode(
-proto = """
-static PyObject *__Pyx_ImportModule(const char *name); /*proto*/
-""",
-impl = """
-#ifndef __PYX_HAVE_RT_ImportModule
-#define __PYX_HAVE_RT_ImportModule
-static PyObject *__Pyx_ImportModule(const char *name) {
-    PyObject *py_name = 0;
-    PyObject *py_module = 0;
-
-    py_name = __Pyx_PyIdentifier_FromString(name);
-    if (!py_name)
-        goto bad;
-    py_module = PyImport_Import(py_name);
-    Py_DECREF(py_name);
-    return py_module;
-bad:
-    Py_XDECREF(py_name);
-    return 0;
-}
-#endif
-""")
-
-#------------------------------------------------------------------------------------
-
-type_import_utility_code = UtilityCode(
-proto = """
-static PyTypeObject *__Pyx_ImportType(const char *module_name, const char *class_name, size_t size, int strict);  /*proto*/
-""",
-impl = """
-#ifndef __PYX_HAVE_RT_ImportType
-#define __PYX_HAVE_RT_ImportType
-static PyTypeObject *__Pyx_ImportType(const char *module_name, const char *class_name,
-    size_t size, int strict)
-{
-    PyObject *py_module = 0;
-    PyObject *result = 0;
-    PyObject *py_name = 0;
-    char warning[200];
-
-    py_module = __Pyx_ImportModule(module_name);
-    if (!py_module)
-        goto bad;
-    py_name = __Pyx_PyIdentifier_FromString(class_name);
-    if (!py_name)
-        goto bad;
-    result = PyObject_GetAttr(py_module, py_name);
-    Py_DECREF(py_name);
-    py_name = 0;
-    Py_DECREF(py_module);
-    py_module = 0;
-    if (!result)
-        goto bad;
-    if (!PyType_Check(result)) {
-        PyErr_Format(PyExc_TypeError,
-            "%s.%s is not a type object",
-            module_name, class_name);
-        goto bad;
-    }
-    if (!strict && ((PyTypeObject *)result)->tp_basicsize > (Py_ssize_t)size) {
-        PyOS_snprintf(warning, sizeof(warning),
-            "%s.%s size changed, may indicate binary incompatibility",
-            module_name, class_name);
-        #if PY_VERSION_HEX < 0x02050000
-        if (PyErr_Warn(NULL, warning) < 0) goto bad;
-        #else
-        if (PyErr_WarnEx(NULL, warning, 0) < 0) goto bad;
-        #endif
-    }
-    else if (((PyTypeObject *)result)->tp_basicsize != (Py_ssize_t)size) {
-        PyErr_Format(PyExc_ValueError,
-            "%s.%s has the wrong size, try recompiling",
-            module_name, class_name);
-        goto bad;
-    }
-    return (PyTypeObject *)result;
-bad:
-    Py_XDECREF(py_module);
-    Py_XDECREF(result);
-    return NULL;
-}
-#endif
-""")
+import_module_utility_code = UtilityCode.load_cached("ModuleImport", "ModuleSetupCode.c")
+type_import_utility_code = UtilityCode.load_cached("TypeImport", "ModuleSetupCode.c")
 
 #------------------------------------------------------------------------------------
 
@@ -2801,71 +2721,7 @@ bad:
 """ % {'IMPORT_STAR'     : Naming.import_star,
        'IMPORT_STAR_SET' : Naming.import_star_set }
 
-refnanny_utility_code = UtilityCode(
-proto="""
-#ifndef CYTHON_REFNANNY
-  #define CYTHON_REFNANNY 0
-#endif
-
-#if CYTHON_REFNANNY
-  typedef struct {
-    void (*INCREF)(void*, PyObject*, int);
-    void (*DECREF)(void*, PyObject*, int);
-    void (*GOTREF)(void*, PyObject*, int);
-    void (*GIVEREF)(void*, PyObject*, int);
-    void* (*SetupContext)(const char*, int, const char*);
-    void (*FinishContext)(void**);
-  } __Pyx_RefNannyAPIStruct;
-  static __Pyx_RefNannyAPIStruct *__Pyx_RefNanny = NULL;
-  static __Pyx_RefNannyAPIStruct *__Pyx_RefNannyImportAPI(const char *modname); /*proto*/
-  #define __Pyx_RefNannyDeclarations void *__pyx_refnanny = NULL;
-  #define __Pyx_RefNannySetupContext(name) \
-          __pyx_refnanny = __Pyx_RefNanny->SetupContext((name), __LINE__, __FILE__)
-  #define __Pyx_RefNannyFinishContext() \
-          __Pyx_RefNanny->FinishContext(&__pyx_refnanny)
-  #define __Pyx_INCREF(r)  __Pyx_RefNanny->INCREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
-  #define __Pyx_DECREF(r)  __Pyx_RefNanny->DECREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
-  #define __Pyx_GOTREF(r)  __Pyx_RefNanny->GOTREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
-  #define __Pyx_GIVEREF(r) __Pyx_RefNanny->GIVEREF(__pyx_refnanny, (PyObject *)(r), __LINE__)
-  #define __Pyx_XINCREF(r)  do { if((r) != NULL) {__Pyx_INCREF(r); }} while(0)
-  #define __Pyx_XDECREF(r)  do { if((r) != NULL) {__Pyx_DECREF(r); }} while(0)
-  #define __Pyx_XGOTREF(r)  do { if((r) != NULL) {__Pyx_GOTREF(r); }} while(0)
-  #define __Pyx_XGIVEREF(r) do { if((r) != NULL) {__Pyx_GIVEREF(r);}} while(0)
-#else
-  #define __Pyx_RefNannyDeclarations
-  #define __Pyx_RefNannySetupContext(name)
-  #define __Pyx_RefNannyFinishContext()
-  #define __Pyx_INCREF(r) Py_INCREF(r)
-  #define __Pyx_DECREF(r) Py_DECREF(r)
-  #define __Pyx_GOTREF(r)
-  #define __Pyx_GIVEREF(r)
-  #define __Pyx_XINCREF(r) Py_XINCREF(r)
-  #define __Pyx_XDECREF(r) Py_XDECREF(r)
-  #define __Pyx_XGOTREF(r)
-  #define __Pyx_XGIVEREF(r)
-#endif /* CYTHON_REFNANNY */
-
-#define __Pyx_CLEAR(r)    do { PyObject* tmp = ((PyObject*)(r)); r = NULL; __Pyx_DECREF(tmp);} while(0)
-#define __Pyx_XCLEAR(r)   do { if((r) != NULL) {PyObject* tmp = ((PyObject*)(r)); r = NULL; __Pyx_DECREF(tmp);}} while(0)
-""",
-impl="""
-#if CYTHON_REFNANNY
-static __Pyx_RefNannyAPIStruct *__Pyx_RefNannyImportAPI(const char *modname) {
-    PyObject *m = NULL, *p = NULL;
-    void *r = NULL;
-    m = PyImport_ImportModule((char *)modname);
-    if (!m) goto end;
-    p = PyObject_GetAttrString(m, (char *)\"RefNannyAPI\");
-    if (!p) goto end;
-    r = PyLong_AsVoidPtr(p);
-end:
-    Py_XDECREF(p);
-    Py_XDECREF(m);
-    return (__Pyx_RefNannyAPIStruct *)r;
-}
-#endif /* CYTHON_REFNANNY */
-""",
-)
+refnanny_utility_code = UtilityCode.load_cached("Refnanny", "ModuleSetupCode.c")
 
 main_method = UtilityCode(
 impl = """
@@ -3068,3 +2924,5 @@ packed_struct_utility_code = UtilityCode(proto="""
 #define __Pyx_PACKED
 #endif
 """, impl="", proto_block='utility_code_proto_before_types')
+
+capsule_utility_code = UtilityCode.load("Capsule")

@@ -185,7 +185,7 @@ class Context(object):
         # the directory containing the source file is searched first
         # for a dotted filename, and its containing package root
         # directory is searched first for a non-dotted filename.
-        pxd = self.search_include_directories(qualified_name, ".pxd", pos)
+        pxd = self.search_include_directories(qualified_name, ".pxd", pos, sys_path=True)
         if pxd is None: # XXX Keep this until Includes/Deprecated is removed
             if (qualified_name.startswith('python') or
                 qualified_name in ('stdlib', 'stdio', 'stl')):
@@ -224,13 +224,16 @@ class Context(object):
         return path
 
     def search_include_directories(self, qualified_name, suffix, pos,
-                                   include=False):
+                                   include=False, sys_path=False):
         # Search the list of include directories for the given
         # file name. If a source file position is given, first
         # searches the directory containing that file. Returns
         # None if not found, but does not report an error.
         # The 'include' option will disable package dereferencing.
+        # If 'sys_path' is True, also search sys.path.
         dirs = self.include_directories
+        if sys_path:
+            dirs = dirs + sys.path
         if pos:
             file_desc = pos[0]
             if not isinstance(file_desc, FileSourceDescriptor):
@@ -357,10 +360,28 @@ class Context(object):
                 tree = Parsing.p_module(s, pxd, full_module_name)
             finally:
                 f.close()
-        except UnicodeDecodeError, msg:
+        except UnicodeDecodeError, e:
             #import traceback
             #traceback.print_exc()
-            error((source_desc, 0, 0), "Decoding error, missing or incorrect coding=<encoding-name> at top of source (%s)" % msg)
+            line = 1
+            column = 0
+            msg = e.args[-1]
+            position = e.args[2]
+            encoding = e.args[0]
+
+            for idx, c in enumerate(open(source_filename, "rb").read()):
+                if c in (ord('\n'), '\n'):
+                    line += 1
+                    column = 0
+                if idx == position:
+                    break
+
+                column += 1
+
+            error((source_desc, line, column),
+                  "Decoding error, missing or incorrect coding=<encoding-name> "
+                  "at top of source (cannot decode with encoding %r: %s)" % (encoding, msg))
+
         if Errors.num_errors > 0:
             raise CompileError
         return tree
@@ -706,4 +727,5 @@ default_options = dict(
     c_line_in_traceback = True,
     language_level = 2,
     gdb_debug = False,
+    compile_time_env = None,
 )

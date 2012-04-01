@@ -140,9 +140,9 @@ does not "follow" the last one anymore (meaning, it was strided already, but it 
 contiguous any longer), since it was sliced.
 
 
-Memoryview objects and cython.array
-===================================
-These typed slices can be converted to Python objects (`cython.memoryview`), and are indexable,
+Memoryview Objects and Cython Arrays
+====================================
+These typed slices can be converted to Python objects (`cython.view.memoryview`), and are indexable,
 slicable and transposable in the same way that the slices are. They can also be converted back to typed
 slices at any time.
 
@@ -176,18 +176,18 @@ the view was resliced in the meantime.
 Cython Array
 ============
 Whenever a slice is copied (using any of the `copy` or `copy_fortran` methods), you get a new
-memoryview slice of a newly created cython.array object. This array can also be used manually,
+memoryview slice of a newly created cython.view.array object. This array can also be used manually,
 and will automatically allocate a block of data. It can later be assigned to a C or Fortran
 contiguous slice (or a strided slice). It can be used like::
 
-    import cython
+    import cython.view
 
-    my_array = cython.array(shape=(10, 2), itemsize=sizeof(int), format="i")
+    my_array = cython.view.array(shape=(10, 2), itemsize=sizeof(int), format="i")
     cdef int[:, :] my_slice = my_array
 
 It also takes an optional argument `mode` ('c' or 'fortran') and a boolean `allocate_buffer`, that indicates whether a buffer should be allocated and freed when it goes out of scope::
 
-    cdef cython.array my_array = cython.array(..., mode="fortran", allocate_buffer=False)
+    cdef cython.view.array my_array = cython.view.array(..., mode="fortran", allocate_buffer=False)
     my_array.data = <char *> my_data_pointer
 
     # define a function that can deallocate the data (if needed)
@@ -195,10 +195,10 @@ It also takes an optional argument `mode` ('c' or 'fortran') and a boolean `allo
 
 You can also cast pointers to array, or C arrays to arrays::
 
-    cdef cython.array my_array = <int[:10, :2]> my_data_pointer
-    cdef cython.array my_array = <int[:, :]> my_c_array
+    cdef cython.view.array my_array = <int[:10, :2]> my_data_pointer
+    cdef cython.view.array my_array = <int[:, :]> my_c_array
 
-Of course, you can also immediately assign a cython.array to a typed memoryview slice. A C array
+Of course, you can also immediately assign a cython.view.array to a typed memoryview slice. A C array
 may be assigned directly to a memoryview slice::
 
     cdef int[:, ::1] myslice = my_2d_c_array
@@ -218,11 +218,15 @@ e.g. do::
 
 Of course, you are not restricted to using NumPy's type (such as ``np.int32_t`` here), you can use any usable type.
 
-The future
-==========
-In the future some functionality may be added for convenience, like
+None Slices
+===========
+Although memoryview slices are not objects they can be set to None and they can be be
+checked for being None as well::
 
-1. A numpy-like `.flat` attribute (that allows efficient iteration)
-2. Indexing with newaxis or None to introduce a new axis
+    def func(double[:] myarray = None):
+        print myarray is None
+
+Unlike object attributes of extension classes, memoryview slices are not initialized
+to None.
 
 .. _NumPy: http://docs.scipy.org/doc/numpy/reference/arrays.ndarray.html#memory-layout

@@ -4,12 +4,23 @@
 
 from __future__ import unicode_literals
 
+from cpython.object cimport PyObject
+from cpython.ref cimport Py_INCREF, Py_DECREF
+
 cimport cython
 from cython cimport view
-from cython.parallel cimport prange
+from cython.view cimport array
+from cython.parallel cimport prange, parallel
 
+import gc
 import sys
 import re
+
+if sys.version_info[0] < 3:
+    import __builtin__ as builtins
+else:
+    import builtins
+
 
 __test__ = {}
 
@@ -25,7 +36,14 @@ def testcase(func):
     if not isinstance(doctest, _u):
         doctest = doctest.decode('UTF-8')
     __test__[func.__name__] = doctest
-    return func
+
+    def wrapper(*args, **kwargs):
+        gc.collect()
+        result = func(*args, **kwargs)
+        gc.collect()
+        return result
+
+    return wrapper
 
 
 include "mockbuffers.pxi"
@@ -52,9 +70,8 @@ def acquire_release(o1, o2):
     released A
     released B
     >>> acquire_release(None, B)
-    Traceback (most recent call last):
-       ...
-    TypeError: 'NoneType' does not have the buffer interface
+    acquired B
+    released B
     """
     cdef int[:] buf
     buf = o1
@@ -148,7 +165,7 @@ def acquire_nonbuffer1(first, second=None):
     >>> acquire_nonbuffer1(None, 2)
     Traceback (most recent call last):
       ...
-    TypeError: 'NoneType' does not have the buffer interface
+    TypeError: 'int' does not have the buffer interface
     >>> acquire_nonbuffer1(4, object())
     Traceback (most recent call last):
       ...
@@ -1240,6 +1257,13 @@ def test_indirect_slicing(arg):
     0 0 -1
     58
     56
+    58
+    index away indirect
+    58
+    58
+    index away generic
+    58
+    58
     released A
 
     >>> test_indirect_slicing(IntMockBuffer("A", shape_9_14_21_list, shape=(9, 14, 21)))
@@ -1248,11 +1272,26 @@ def test_indirect_slicing(arg):
     0 16 -1
     2412
     2410
+    2412
+    index away indirect
+    2412
+    2412
+    index away generic
+    2412
+    2412
     released A
     """
     cdef int[::view.indirect, ::view.indirect, :] a = arg
     cdef int[::view.indirect, ::view.indirect, :] b = a[-5:, ..., -5:100:2]
+    cdef int[::view.generic , :: view.generic, :] generic_b = a[-5:, ..., -5:100:2]
     cdef int[::view.indirect, ::view.indirect] c = b[..., 0]
+
+    # try indexing away leading indirect dimensions
+    cdef int[::view.indirect, :] d = b[4]
+    cdef int[:] e = b[4, 2]
+
+    cdef int[::view.generic, :] generic_d = generic_b[4]
+    cdef int[:] generic_e = generic_b[4, 2]
 
     print b.shape[0], b.shape[1], b.shape[2]
     print b.suboffsets[0] // sizeof(int *),
@@ -1261,6 +1300,90 @@ def test_indirect_slicing(arg):
 
     print b[4, 2, 1]
     print c[4, 2]
+    # test adding offset from last dimension to suboffset
+    print b[..., 1][4, 2]
+
+    print "index away indirect"
+    print d[2, 1]
+    print e[1]
+
+    print "index away generic"
+    print generic_d[2, 1]
+    print generic_e[1]
+
+cdef class TestIndexSlicingDirectIndirectDims(object):
+    "Test a int[:, ::view.indirect, :] slice"
+
+    cdef Py_ssize_t[3] shape, strides, suboffsets
+
+    cdef int c_array[5]
+    cdef int *myarray[5][5]
+    cdef bytes format
+
+    def __init__(self):
+        cdef int i
+        self.c_array[3] = 20
+        self.myarray[1][2] = self.c_array
+
+        for i in range(3):
+            self.shape[i] = 5
+
+        self.strides[0] = sizeof(int *) * 5
+        self.strides[1] = sizeof(int *)
+        self.strides[2] = sizeof(int)
+
+        self.suboffsets[0] = -1
+        self.suboffsets[1] = 0
+        self.suboffsets[2] = -1
+
+        self.format = b"i"
+
+    def __getbuffer__(self, Py_buffer *info, int flags):
+        info.buf = <void *> self.myarray
+        info.len = 5 * 5 * 5
+        info.ndim = 3
+        info.shape = self.shape
+        info.strides = self.strides
+        info.suboffsets = self.suboffsets
+        info.itemsize = sizeof(int)
+        info.readonly = 0
+        info.obj = self
+        info.format = self.format
+
+@testcase
+def test_index_slicing_away_direct_indirect():
+    """
+    >>> test_index_slicing_away_direct_indirect()
+    20
+    20
+    20
+    20
+    <BLANKLINE>
+    20
+    20
+    20
+    20
+    All dimensions preceding dimension 1 must be indexed and not sliced
+    """
+    cdef int[:, ::view.indirect, :] a = TestIndexSlicingDirectIndirectDims()
+    a_obj = a
+
+    print a[1][2][3]
+    print a[1, 2, 3]
+    print a[1, 2][3]
+    print a[..., 3][1, 2]
+
+    print
+
+    print a_obj[1][2][3]
+    print a_obj[1, 2, 3]
+    print a_obj[1, 2][3]
+    print a_obj[..., 3][1, 2]
+
+    try:
+        print a_obj[1:, 2][3]
+    except IndexError, e:
+        print e.args[0]
 
 @testcase
 def test_direct_slicing(arg):
@@ -1442,7 +1565,7 @@ def test_memslice_prange(arg):
 
     src = arg
 
-    dst = cython.array((<object> src).shape, sizeof(int), format="i")
+    dst = array((<object> src).shape, sizeof(int), format="i")
 
     cdef int i, j, k
 
@@ -1455,6 +1578,207 @@ def test_memslice_prange(arg):
         for j in range(src.shape[1]):
             for k in range(src.shape[2]):
                 assert src[i, j, k] == dst[i, j, k], (src[i, j, k] == dst[i, j, k])
+
+@testcase
+def test_clean_temps_prange(int[:, :] buf):
+    """
+    Try to access a buffer out of bounds in a parallel section, and make sure any
+    temps used by the slicing processes are correctly counted.
+
+    >>> A = IntMockBuffer("A", range(100), (10, 10))
+    >>> test_clean_temps_prange(A)
+    acquired A
+    released A
+    """
+    cdef int i
+    try:
+        for i in prange(buf.shape[0], nogil=True):
+            buf[1:10, 20] = 0
+    except IndexError:
+        pass
+
+@testcase
+def test_clean_temps_parallel(int[:, :] buf):
+    """
+    Try to access a buffer out of bounds in a parallel section, and make sure any
+    temps used by the slicing processes are correctly counted.
+
+    >>> A = IntMockBuffer("A", range(100), (10, 10))
+    >>> test_clean_temps_parallel(A)
+    acquired A
+    released A
+    """
+    cdef int i
+    try:
+        with nogil, parallel():
+            try:
+                with gil: pass
+                for i in prange(buf.shape[0]):
+                    buf[1:10, 20] = 0
+            finally:
+                buf[1:10, 20] = 0
+    except IndexError:
+        pass
+
+
+# Test arrays in structs
+cdef struct ArrayStruct:
+    int ints[10]
+    char chars[3]
+
+cdef packed struct PackedArrayStruct:
+    int ints[10]
+    char chars[3]
+
+cdef fused FusedStruct:
+    ArrayStruct
+    PackedArrayStruct
+
+@testcase
+def test_memslice_struct_with_arrays():
+    """
+    >>> test_memslice_struct_with_arrays()
+    abc
+    abc
+    """
+    cdef ArrayStruct a1[10]
+    cdef PackedArrayStruct a2[10]
+
+    test_structs_with_arr(a1)
+    test_structs_with_arr(a2)
+
+cdef test_structs_with_arr(FusedStruct array[10]):
+    cdef FusedStruct[:] myslice1, myslice2, myslice3, myslice4
+    cdef int i, j
+
+    myslice1 = <FusedStruct[:10]> array
+
+    for i in range(10):
+        for j in range(10):
+            myslice1[i].ints[j] = i
+        for j in range(3):
+            myslice1[i].chars[j] = 97 + j
+
+    if sys.version_info[:2] >= (2, 7) and sys.version_info[:2] < (3, 3):
+        size1 = sizeof(FusedStruct)
+        size2 = len(builtins.memoryview(myslice1)[0])
+        assert size1 == size2, (size1, size2, builtins.memoryview(myslice1).format)
+
+        myslice2 = builtins.memoryview(myslice1)
+        for i in range(10):
+            assert myslice2[i].ints[i] == myslice1[i].ints[i]
+            assert myslice2[i].chars[i] == myslice1[i].chars[i]
+
+    myslice3 = <object> myslice1
+    myslice4 = myslice1
+    for i in range(10):
+        for j in range(10):
+            assert myslice3[i].ints[j] == myslice4[i].ints[j] == myslice1[i].ints[j]
+        for j in range(3):
+            assert myslice3[i].chars[j] == myslice4[i].chars[j] == myslice1[i].chars[j]
+
+    print myslice1[0].chars[:3].decode('ascii')
+
+cdef struct TestAttrs:
+    int int_attrib
+    char char_attrib
+
+@testcase
+def test_struct_attributes_format():
+    """
+    >>> test_struct_attributes_format()
+    T{i:int_attrib:b:char_attrib:}
+    """
+    cdef TestAttrs[10] array
+    cdef TestAttrs[:] struct_memview = array
+
+    if sys.version_info[:2] >= (2, 7):
+        print builtins.memoryview(struct_memview).format
+    else:
+        print "T{i:int_attrib:b:char_attrib:}"
+
+
+# Test padding at the end of structs in the buffer support
+cdef struct PaddedAtEnd:
+    int a[3]
+    char b[3]
+
+cdef struct AlignedNested:
+    PaddedAtEnd a
+    char chars[1]
+
+cdef struct PaddedAtEndNormal:
+    int a
+    char b
+    char c
+    char d
+
+cdef struct AlignedNestedNormal:
+    PaddedAtEndNormal a
+    char chars
+
+# Test nested structs in a struct, make sure we compute padding each time
+# accordingly. If the first struct member is a struct, align on the first
+# member of that struct (recursively)
+cdef struct A:
+    double d
+    char c
+
+cdef struct B:
+    char c1
+    A a
+    char c2
+
+cdef struct C:
+    A a
+    char c1
+
+cdef struct D:
+    B b
+    C cstruct
+    int a[2]
+    char c
+
+cdef fused FusedPadded:
+    ArrayStruct
+    PackedArrayStruct
+    AlignedNested
+    AlignedNestedNormal
+    A
+    B
+    C
+    D
+
+@testcase
+def test_padded_structs():
+    """
+    >>> test_padded_structs()
+    """
+    cdef ArrayStruct a1[10]
+    cdef PackedArrayStruct a2[10]
+    cdef AlignedNested a3[10]
+    cdef AlignedNestedNormal a4[10]
+    cdef A a5[10]
+    cdef B a6[10]
+    cdef C a7[10]
+    cdef D a8[10]
+
+    _test_padded(a1)
+    _test_padded(a2)
+    _test_padded(a3)
+    _test_padded(a4)
+    _test_padded(a5)
+    _test_padded(a6)
+    _test_padded(a7)
+    # There is a pre-existing bug that doesn't parse the format for this
+    # struct properly -- fix this
+    #_test_padded(a8)
+
+cdef _test_padded(FusedPadded myarray[10]):
+    # test that the buffer format parser accepts our format string...
+    cdef FusedPadded[:] myslice = <FusedPadded[:10]> myarray
+    obj = myslice
+    cdef FusedPadded[:] myotherslice = obj
 
 @testcase
 def test_object_indices():
@@ -1473,3 +1797,446 @@ def test_object_indices():
 
     for j in range(3):
         print myslice[j]
+
+cdef fused slice_1d:
+    object
+    int[:]
+
+cdef fused slice_2d:
+    object
+    int[:, :]
+
+@testcase
+def test_ellipsis_expr():
+    """
+    >>> test_ellipsis_expr()
+    8
+    8
+    """
+    cdef int[10] a
+    cdef int[:] m = a
+
+    _test_ellipsis_expr(m)
+    _test_ellipsis_expr(<object> m)
+
+cdef _test_ellipsis_expr(slice_1d m):
+    m[4] = 8
+    m[...] = m[...]
+    print m[4]
+
+@testcase
+def test_slice_assignment():
+    """
+    >>> test_slice_assignment()
+    """
+    cdef int carray[10][100]
+    cdef int i, j
+
+    for i in range(10):
+        for j in range(100):
+            carray[i][j] = i * 100 + j
+
+    cdef int[:, :] m = carray
+    cdef int[:, :] copy = m[-6:-1, 60:65].copy()
+
+    _test_slice_assignment(m, copy)
+    _test_slice_assignment(<object> m, <object> copy)
+
+cdef _test_slice_assignment(slice_2d m, slice_2d copy):
+    cdef int i, j
+
+    m[...] = m[::-1, ::-1]
+    m[:, :] = m[::-1, ::-1]
+    m[-5:, -5:] = m[-6:-1, 60:65]
+
+    for i in range(5):
+        for j in range(5):
+            assert copy[i, j] == m[-5 + i, -5 + j], (copy[i, j], m[-5 + i, -5 + j])
+
+@testcase
+def test_slice_assignment_broadcast_leading():
+    """
+    >>> test_slice_assignment_broadcast_leading()
+    """
+    cdef int array1[1][10]
+    cdef int array2[10]
+    cdef int i
+
+    for i in range(10):
+        array1[0][i] = i
+
+    cdef int[:, :] a = array1
+    cdef int[:] b = array2
+
+    _test_slice_assignment_broadcast_leading(a, b)
+
+    for i in range(10):
+        array1[0][i] = i
+
+    _test_slice_assignment_broadcast_leading(<object> a, <object> b)
+
+cdef _test_slice_assignment_broadcast_leading(slice_2d a, slice_1d b):
+    cdef int i
+
+    b[:] = a[:, :]
+    b = b[::-1]
+    a[:, :] = b[:]
+
+    for i in range(10):
+        assert a[0, i] == b[i] == 10 - 1 - i, (a[0, i], b[i], 10 - 1 - i)
+
+@testcase
+def test_slice_assignment_broadcast_strides():
+    """
+    >>> test_slice_assignment_broadcast_strides()
+    """
+    cdef int src_array[10]
+    cdef int dst_array[10][5]
+    cdef int i, j
+
+    for i in range(10):
+        src_array[i] = 10 - 1 - i
+
+    cdef int[:] src = src_array
+    cdef int[:, :] dst = dst_array
+    cdef int[:, :] dst_f = dst.copy_fortran()
+
+    _test_slice_assignment_broadcast_strides(src, dst, dst_f)
+    _test_slice_assignment_broadcast_strides(<object> src, <object> dst, <object> dst_f)
+
+cdef _test_slice_assignment_broadcast_strides(slice_1d src, slice_2d dst, slice_2d dst_f):
+    cdef int i, j
+
+    dst[1:] = src[-1:-6:-1]
+    dst_f[1:] = src[-1:-6:-1]
+
+    for i in range(1, 10):
+        for j in range(1, 5):
+            assert dst[i, j] == dst_f[i, j] == j, (dst[i, j], dst_f[i, j], j)
+
+    # test overlapping memory with broadcasting
+    dst[:, 1:4] = dst[1, :3]
+    dst_f[:, 1:4] = dst[1, 1:4]
+
+    for i in range(10):
+        for j in range(1, 3):
+            assert dst[i, j] == dst_f[i, j] == j - 1, (dst[i, j], dst_f[i, j], j - 1)
+
+@testcase
+def test_borrowed_slice():
+    """
+    Test the difference between borrowed an non-borrowed slices. If you delete or assign
+    to a slice in a cdef function, it is not borrowed.
+
+    >>> test_borrowed_slice()
+    5
+    5
+    5
+    """
+    cdef int i, carray[10]
+    for i in range(10):
+        carray[i] = i
+    _borrowed(carray)
+    _not_borrowed(carray)
+    _not_borrowed2(carray)
+
+cdef _borrowed(int[:] m):
+    print m[5]
+
+cdef _not_borrowed(int[:] m):
+    print m[5]
+    if object():
+        del m
+
+cdef _not_borrowed2(int[:] m):
+    cdef int[10] carray
+    print m[5]
+    if object():
+        m = carray
+
+class SingleObject(object):
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return str(self.value)
+
+    def __eq__(self, other):
+        return self.value == getattr(other, 'value', None) or self.value == other
+
+cdef _get_empty_object_slice(fill=None):
+    cdef array a = array((10,), sizeof(PyObject *), 'O')
+    assert a.dtype_is_object
+    return a
+
+@testcase
+def test_object_dtype_copying():
+    """
+    >>> test_object_dtype_copying()
+    0
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    3 5
+    2 5
+    """
+    cdef int i
+
+    unique = object()
+    unique_refcount = get_refcount(unique)
+
+    cdef object[:] m1 = _get_empty_object_slice()
+    cdef object[:] m2 = _get_empty_object_slice()
+
+    for i in range(10):
+        m1[i] = SingleObject(i)
+
+    m2[...] = m1
+    del m1
+
+    for i in range(10):
+        print m2[i]
+
+    obj = m2[5]
+    print get_refcount(obj), obj
+
+    del m2
+    print get_refcount(obj), obj
+
+    assert unique_refcount == get_refcount(unique), (unique_refcount, get_refcount(unique))
+
+@testcase
+def test_scalar_slice_assignment():
+    """
+    >>> test_scalar_slice_assignment()
+    0
+    1
+    6
+    3
+    6
+    5
+    6
+    7
+    6
+    9
+    <BLANKLINE>
+    0
+    1
+    6
+    3
+    6
+    5
+    6
+    7
+    6
+    9
+    """
+    cdef int[10] a
+    cdef int[:] m = a
+
+    cdef int a2[5][10]
+    cdef int[:, ::1] m2 = a2
+
+    _test_scalar_slice_assignment(m, m2)
+    print
+    _test_scalar_slice_assignment(<object> m, <object> m2)
+
+cdef _test_scalar_slice_assignment(slice_1d m, slice_2d m2):
+    cdef int i, j
+    for i in range(10):
+        m[i] = i
+
+    m[-2:0:-2] = 6
+    for i in range(10):
+        print m[i]
+
+    for i in range(m2.shape[0]):
+        for j in range(m2.shape[1]):
+            m2[i, j] = i * m2.shape[1] + j
+
+    cdef int x = 2, y = -2
+    cdef long value = 1
+    m2[::2,    ::-1] = value
+    m2[-2::-2, ::-1] = 2
+    m2[::2,    -2::-2] = 0
+    m2[-2::-2, -2::-2] = 0
+
+
+    cdef int[:, :] s = m2[..., 1::2]
+    for i in range(s.shape[0]):
+        for j in range(s.shape[1]):
+            assert s[i, j] == i % 2 + 1, (s[i, j], i)
+
+    s = m2[::2, 1::2]
+    for i in range(s.shape[0]):
+        for j in range(s.shape[1]):
+            assert s[i, j] == 1, s[i, j]
+
+    s = m2[1::2, ::2]
+    for i in range(s.shape[0]):
+        for j in range(s.shape[1]):
+            assert s[i, j] == 0, s[i, j]
+
+
+    m2[...] = 3
+    for i in range(m2.shape[0]):
+        for j in range(m2.shape[1]):
+            assert m2[i, j] == 3, s[i, j]
+
+@testcase
+def test_contig_scalar_to_slice_assignment():
+    """
+    >>> test_contig_scalar_to_slice_assignment()
+    14 14 14 14
+    20 20 20 20
+    """
+    cdef int a[5][10]
+    cdef int[:, ::1] m = a
+
+    m[...] = 14
+    print m[0, 0], m[-1, -1], m[3, 2], m[4, 9]
+
+    m[:, :] = 20
+    print m[0, 0], m[-1, -1], m[3, 2], m[4, 9]
+
+@testcase
+def test_dtype_object_scalar_assignment():
+    """
+    >>> test_dtype_object_scalar_assignment()
+    """
+    cdef object[:] m = array((10,), sizeof(PyObject *), 'O')
+    m[:] = SingleObject(2)
+    assert m[0] == m[4] == m[-1] == 2
+
+    (<object> m)[:] = SingleObject(3)
+    assert m[0] == m[4] == m[-1] == 3
+
+#
+### Test slices that are set to None
+#
+@testcase
+def test_coerce_to_from_None(double[:] m1, double[:] m2 = None):
+    """
+    >>> test_coerce_to_from_None(None)
+    (None, None)
+    >>> test_coerce_to_from_None(None, None)
+    (None, None)
+    """
+    return m1, m2
+
+@testcase
+def test_noneslice_attrib(double[:] m):
+    """
+    >>> test_noneslice_attrib(None)
+    'NoneType' object has no attribute 'copy'
+    'NoneType' object has no attribute 'T'
+    """
+    cdef double[:] m2
+
+    with cython.nonecheck(True):
+        try:
+            m2 = m.copy()
+        except Exception, e:
+            print e.args[0]
+
+        try:
+            m2 = m.T
+        except Exception, e:
+            print e.args[0]
+
+@testcase
+def test_noneslice_index(double[:] m):
+    """
+    >>> test_noneslice_index(None)
+    Cannot index None memoryview slice
+    Cannot index None memoryview slice
+    Cannot index None memoryview slice
+    Cannot index None memoryview slice
+    """
+    with cython.nonecheck(True):
+        try:
+            m[10]
+        except Exception, e:
+            print e.args[0]
+
+        try:
+            m[:]
+        except Exception, e:
+            print e.args[0]
+
+        try:
+            m[10] = 2
+        except Exception, e:
+            print e.args[0]
+
+        try:
+            m[:] = 2
+        except Exception, e:
+            print e.args[0]
+
+@testcase
+def test_noneslice_compare(double[:] m):
+    """
+    >>> test_noneslice_compare(None)
+    (True, True)
+    """
+    with cython.nonecheck(True):
+        result = m is None
+
+    return result, m is None
+
+cdef class NoneSliceAttr(object):
+    cdef double[:] m
+
+@testcase
+def test_noneslice_ext_attr():
+    """
+    >>> test_noneslice_ext_attr()
+    AttributeError Memoryview is not initialized
+    None
+    """
+    cdef NoneSliceAttr obj = NoneSliceAttr()
+
+    with cython.nonecheck(True):
+        try: print obj.m
+        except Exception, e: print type(e).__name__, e.args[0]
+
+        obj.m = None
+        print obj.m
+
+@testcase
+def test_noneslice_del():
+    """
+    >>> test_noneslice_del()
+    Traceback (most recent call last):
+       ...
+    UnboundLocalError: local variable 'm' referenced before assignment
+    """
+    cdef int[10] a
+    cdef int[:] m = a
+
+    with cython.nonecheck(True):
+        m = None
+        del m
+        print m
+
+def get_int():
+    return 10
+
+@testcase
+def test_inplace_assignment():
+    """
+    >>> test_inplace_assignment()
+    10
+    """
+    cdef int[10] a
+    cdef int[:] m = a
+
+    m[0] = get_int()
+    print m[0]

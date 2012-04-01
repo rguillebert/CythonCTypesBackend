@@ -2,11 +2,10 @@
 
 static CYTHON_INLINE PyObject* __Pyx_PyObject_Append(PyObject* L, PyObject* x) {
     if (likely(PyList_CheckExact(L))) {
-        if (PyList_Append(L, x) < 0) return NULL;
+        if (unlikely(PyList_Append(L, x) < 0)) return NULL;
         Py_INCREF(Py_None);
         return Py_None; /* this is just to have an accurate signature */
-    }
-    else {
+    } else {
         PyObject *r, *m;
         m = __Pyx_GetAttrString(L, "append");
         if (!m) return NULL;
@@ -16,11 +15,28 @@ static CYTHON_INLINE PyObject* __Pyx_PyObject_Append(PyObject* L, PyObject* x) {
     }
 }
 
+/////////////// InternalListAppend.proto ///////////////
+
+#if CYTHON_COMPILING_IN_CPYTHON
+static CYTHON_INLINE int __Pyx_PyList_Append(PyObject* list, PyObject* x) {
+    PyListObject* L = (PyListObject*) list;
+    Py_ssize_t len = Py_SIZE(list);
+    if (likely(L->allocated > len)) {
+        Py_INCREF(x);
+        PyList_SET_ITEM(list, len, x);
+        Py_SIZE(list) = len+1;
+        return 0;
+    }
+    return PyList_Append(list, x);
+}
+#else
+#define __Pyx_PyList_Append(L,x) PyList_Append(L,x)
+#endif
 
 /////////////// pop.proto ///////////////
 
 static CYTHON_INLINE PyObject* __Pyx_PyObject_Pop(PyObject* L) {
-#if PY_VERSION_HEX >= 0x02040000
+#if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x02040000
     if (likely(PyList_CheckExact(L))
         /* Check that both the size is positive and no reallocation shrinking needs to be done. */
         && likely(PyList_GET_SIZE(L) > (((PyListObject*)L)->allocated >> 1))) {
@@ -41,7 +57,7 @@ static CYTHON_INLINE PyObject* __Pyx_PyObject_Pop(PyObject* L) {
 
 static PyObject* __Pyx_PyObject_PopIndex(PyObject* L, Py_ssize_t ix) {
     PyObject *r, *m, *t, *py_ix;
-#if PY_VERSION_HEX >= 0x02040000
+#if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x02040000
     if (likely(PyList_CheckExact(L))) {
         Py_ssize_t size = PyList_GET_SIZE(L);
         if (likely(size > (((PyListObject*)L)->allocated >> 1))) {
@@ -299,6 +315,111 @@ static CYTHON_INLINE PyObject* __Pyx_PyDict_Clear(PyObject* d) {
     return Py_None;
 }
 
+/////////////// dict_iter.proto ///////////////
+
+static CYTHON_INLINE PyObject* __Pyx_dict_iterator(PyObject* dict, int is_dict, PyObject* method_name,
+                                                   Py_ssize_t* p_orig_length, int* p_is_dict);
+static CYTHON_INLINE int __Pyx_dict_iter_next(PyObject* dict_or_iter, Py_ssize_t orig_length, Py_ssize_t* ppos,
+                                              PyObject** pkey, PyObject** pvalue, PyObject** pitem, int is_dict);
+
+/////////////// dict_iter ///////////////
+//@requires: ObjectHandling.c::UnpackTuple2
+//@requires: ObjectHandling.c::IterFinish
+
+static CYTHON_INLINE PyObject* __Pyx_dict_iterator(PyObject* iterable, int is_dict, PyObject* method_name,
+                                                   Py_ssize_t* p_orig_length, int* p_source_is_dict) {
+    is_dict = is_dict || likely(PyDict_CheckExact(iterable));
+    *p_source_is_dict = is_dict;
+#if !CYTHON_COMPILING_IN_PYPY
+    if (is_dict) {
+        *p_orig_length = PyDict_Size(iterable);
+        Py_INCREF(iterable);
+        return iterable;
+    }
+#endif
+    *p_orig_length = 0;
+    if (method_name) {
+        PyObject* iter;
+        iterable = PyObject_CallMethodObjArgs(iterable, method_name, NULL);
+        if (!iterable)
+            return NULL;
+#if !CYTHON_COMPILING_IN_PYPY
+        if (PyTuple_CheckExact(iterable) || PyList_CheckExact(iterable))
+            return iterable;
+#endif
+        iter = PyObject_GetIter(iterable);
+        Py_DECREF(iterable);
+        return iter;
+    }
+    return PyObject_GetIter(iterable);
+}
+
+static CYTHON_INLINE int __Pyx_dict_iter_next(PyObject* iter_obj, Py_ssize_t orig_length, Py_ssize_t* ppos,
+                                              PyObject** pkey, PyObject** pvalue, PyObject** pitem, int source_is_dict) {
+    PyObject* next_item;
+#if !CYTHON_COMPILING_IN_PYPY
+    if (source_is_dict) {
+        PyObject *key, *value;
+        if (unlikely(orig_length != PyDict_Size(iter_obj))) {
+            PyErr_SetString(PyExc_RuntimeError, "dictionary changed size during iteration");
+            return -1;
+        }
+        if (unlikely(!PyDict_Next(iter_obj, ppos, &key, &value))) {
+            return 0;
+        }
+        if (pitem) {
+            PyObject* tuple = PyTuple_New(2);
+            if (unlikely(!tuple)) {
+                return -1;
+            }
+            Py_INCREF(key);
+            Py_INCREF(value);
+            PyTuple_SET_ITEM(tuple, 0, key);
+            PyTuple_SET_ITEM(tuple, 1, value);
+            *pitem = tuple;
+        } else {
+            if (pkey) {
+                Py_INCREF(key);
+                *pkey = key;
+            }
+            if (pvalue) {
+                Py_INCREF(value);
+                *pvalue = value;
+            }
+        }
+        return 1;
+    } else if (PyTuple_CheckExact(iter_obj)) {
+        Py_ssize_t pos = *ppos;
+        if (unlikely(pos >= PyTuple_GET_SIZE(iter_obj))) return 0;
+        *ppos = pos + 1;
+        next_item = PyTuple_GET_ITEM(iter_obj, pos);
+        Py_INCREF(next_item);
+    } else if (PyList_CheckExact(iter_obj)) {
+        Py_ssize_t pos = *ppos;
+        if (unlikely(pos >= PyList_GET_SIZE(iter_obj))) return 0;
+        *ppos = pos + 1;
+        next_item = PyList_GET_ITEM(iter_obj, pos);
+        Py_INCREF(next_item);
+    } else
+#endif
+    {
+        next_item = PyIter_Next(iter_obj);
+        if (unlikely(!next_item)) {
+            return __Pyx_IterFinish();
+        }
+    }
+    if (pitem) {
+        *pitem = next_item;
+    } else if (pkey && pvalue) {
+        if (__Pyx_unpack_tuple2(next_item, pkey, pvalue, source_is_dict, source_is_dict, 1))
+            return -1;
+    } else if (pkey) {
+        *pkey = next_item;
+    } else {
+        *pvalue = next_item;
+    }
+    return 1;
+}
 
 /////////////// pyobject_as_double.proto ///////////////
 

@@ -43,6 +43,14 @@ import sys
 import time
 from unittest import TestResult, _TextTestResult, TextTestRunner
 from cStringIO import StringIO
+import xml.dom.minidom
+
+
+class XMLDocument(xml.dom.minidom.Document):
+    def createCDATAOrText(self, data):
+        if ']]>' in data:
+            return self.createTextNode(data)
+        return self.createCDATASection(data)
 
 
 class _TestInfo(object):
@@ -97,6 +105,7 @@ class _XMLTestResult(_TextTestResult):
         self.successes = []
         self.callback = None
         self.elapsed_times = elapsed_times
+        self.output_patched = False
 
     def _prepare_callback(self, test_info, target_list, verbose_str,
         short_str):
@@ -124,13 +133,16 @@ class _XMLTestResult(_TextTestResult):
         """Replace the stdout and stderr streams with string-based streams
         in order to capture the tests' output.
         """
-        (self.old_stdout, self.old_stderr) = (sys.stdout, sys.stderr)
+        if not self.output_patched:
+            (self.old_stdout, self.old_stderr) = (sys.stdout, sys.stderr)
+            self.output_patched = True
         (sys.stdout, sys.stderr) = (self.stdout, self.stderr) = \
             (StringIO(), StringIO())
 
     def _restore_standard_output(self):
         "Restore the stdout and stderr streams."
         (sys.stdout, sys.stderr) = (self.old_stdout, self.old_stderr)
+        self.output_patched = False
 
     def startTest(self, test):
         "Called before execute each test method."
@@ -241,7 +253,7 @@ class _XMLTestResult(_TextTestResult):
             failure.setAttribute('message', str(test_result.err[1]))
 
             error_info = test_result.get_error_info()
-            failureText = xml_document.createCDATASection(error_info)
+            failureText = xml_document.createCDATAOrText(error_info)
             failure.appendChild(failureText)
 
     _report_testcase = staticmethod(_report_testcase)
@@ -251,20 +263,19 @@ class _XMLTestResult(_TextTestResult):
         systemout = xml_document.createElement('system-out')
         xml_testsuite.appendChild(systemout)
 
-        systemout_text = xml_document.createCDATASection(stdout)
+        systemout_text = xml_document.createCDATAOrText(stdout)
         systemout.appendChild(systemout_text)
 
         systemerr = xml_document.createElement('system-err')
         xml_testsuite.appendChild(systemerr)
 
-        systemerr_text = xml_document.createCDATASection(stderr)
+        systemerr_text = xml_document.createCDATAOrText(stderr)
         systemerr.appendChild(systemerr_text)
 
     _report_output = staticmethod(_report_output)
 
     def generate_reports(self, test_runner):
         "Generates the XML reports to a given XMLTestRunner object."
-        from xml.dom.minidom import Document
         all_results = self._get_info_by_testcase()
 
         if type(test_runner.output) == str and not \
@@ -272,7 +283,7 @@ class _XMLTestResult(_TextTestResult):
             os.makedirs(test_runner.output)
 
         for suite, tests in all_results.items():
-            doc = Document()
+            doc = XMLDocument()
 
             # Build the XML file
             testsuite = _XMLTestResult._report_testsuite(suite, tests, doc)

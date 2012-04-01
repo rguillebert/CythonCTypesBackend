@@ -120,7 +120,7 @@ class ResultRefNode(AtomicExprNode):
     subexprs = []
     lhs_of_first_assignment = False
 
-    def __init__(self, expression=None, pos=None, type=None, may_hold_none=True):
+    def __init__(self, expression=None, pos=None, type=None, may_hold_none=True, is_temp=False):
         self.expression = expression
         self.pos = None
         self.may_hold_none = may_hold_none
@@ -132,6 +132,8 @@ class ResultRefNode(AtomicExprNode):
             self.pos = pos
         if type is not None:
             self.type = type
+        if is_temp:
+            self.is_temp = True
         assert self.pos is not None
 
     def clone_node(self):
@@ -307,6 +309,11 @@ class LetNode(Nodes.StatNode, LetNodeMixin):
         self.setup_temp_expr(code)
         self.body.generate_execution_code(code)
         self.teardown_temp_expr(code)
+
+    def generate_function_definitions(self, env, code):
+        self.temp_expression.generate_function_definitions(env, code)
+        self.body.generate_function_definitions(env, code)
+
 
 class TempResultFromStatNode(ExprNodes.ExprNode):
     # An ExprNode wrapper around a StatNode that executes the StatNode

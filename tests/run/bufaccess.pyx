@@ -9,10 +9,14 @@
 
 from __future__ import unicode_literals
 
+from cpython.object cimport PyObject
+from cpython.ref cimport Py_INCREF, Py_DECREF
+cimport cython
+
 __test__ = {}
 
 import sys
-import re
+#import re
 exclude = []#re.compile('object').search]
 
 def testcase(func):
@@ -1114,3 +1118,30 @@ def buffer_nogil():
     with nogil:
         buf[1] = 10
     return buf[1]
+
+@testcase
+def buffer_nogil_oob():
+    """
+    >>> buffer_nogil_oob()
+    Traceback (most recent call last):
+        ...
+    IndexError: Out of bounds on buffer access (axis 0)
+    """
+    cdef object[int] buf = IntMockBuffer(None, [1,2,3])
+    with nogil:
+        buf[5] = 10
+    return buf[1]
+
+def get_int():
+    return 10
+
+@testcase
+def test_inplace_assignment():
+    """
+    >>> test_inplace_assignment()
+    10
+    """
+    cdef object[int, ndim=1] buf = IntMockBuffer(None, [1, 2, 3])
+
+    buf[0] = get_int()
+    print buf[0]

@@ -103,9 +103,6 @@ class CythonScope(ModuleScope):
         cython_test_extclass_utility_code.declare_in_scope(
                                     self, cython_scope=self)
 
-        MemoryView.cython_array_utility_code.declare_in_scope(
-                                        self, cython_scope=self)
-
         #
         # The view sub-scope
         #
@@ -115,13 +112,13 @@ class CythonScope(ModuleScope):
         viewscope.pxd_file_loaded = True
 
         cythonview_testscope_utility_code.declare_in_scope(
-                                                viewscope, cython_scope=self)
+                                            viewscope, cython_scope=self)
 
         view_utility_scope = MemoryView.view_utility_code.declare_in_scope(
-                                                viewscope, cython_scope=self)
+                                            self.viewscope, cython_scope=self,
+                                            whitelist=MemoryView.view_utility_whitelist)
 
-        # MemoryView.memview_fromslice_utility_code.from_scope = view_utility_scope
-        # MemoryView.memview_fromslice_utility_code.declare_in_scope(viewscope)
+        # self.entries["array"] = view_utility_scope.entries.pop("array")
 
 
 def create_cython_scope(context):

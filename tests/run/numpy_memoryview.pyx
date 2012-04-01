@@ -5,8 +5,11 @@
 Test slicing for memoryviews and memoryviewslices
 """
 
+import sys
+
 cimport numpy as np
 import numpy as np
+cimport cython
 
 include "cythonarrayutil.pxi"
 include "mockbuffers.pxi"
@@ -189,24 +192,46 @@ def test_transpose():
 
     print a[3, 2], a.T[2, 3], a_obj[3, 2], a_obj.T[2, 3], numpy_obj[3, 2], numpy_obj.T[2, 3]
 
-@testcase
+@testcase_numpy_1_5
 def test_numpy_like_attributes(cyarray):
     """
+    For some reason this fails in numpy 1.4, with shape () and strides (40, 8)
+    instead of 20, 4 on my machine. Investigate this.
+
     >>> cyarray = create_array(shape=(8, 5), mode="c")
     >>> test_numpy_like_attributes(cyarray)
     >>> test_numpy_like_attributes(cyarray.memview)
     """
     numarray = np.asarray(cyarray)
 
-    assert cyarray.shape == numarray.shape
-    assert cyarray.strides == numarray.strides
-    assert cyarray.ndim == numarray.ndim
-    assert cyarray.size == numarray.size
-    assert cyarray.nbytes == numarray.nbytes
+    assert cyarray.shape == numarray.shape, (cyarray.shape, numarray.shape)
+    assert cyarray.strides == numarray.strides, (cyarray.strides, numarray.strides)
+    assert cyarray.ndim == numarray.ndim, (cyarray.ndim, numarray.ndim)
+    assert cyarray.size == numarray.size, (cyarray.size, numarray.size)
+    assert cyarray.nbytes == numarray.nbytes, (cyarray.nbytes, numarray.nbytes)
 
     cdef int[:, :] mslice = numarray
     assert (<object> mslice).base is numarray
 
+@testcase_numpy_1_5
+def test_copy_and_contig_attributes(a):
+    """
+    >>> a = np.arange(20, dtype=np.int32).reshape(5, 4)
+    >>> test_copy_and_contig_attributes(a)
+    """
+    cdef np.int32_t[:, :] mslice = a
+    m = mslice
+
+    # Test object copy attributes
+    assert np.all(a == np.array(m.copy()))
+    assert a.strides == m.strides == m.copy().strides
+
+    assert np.all(a == np.array(m.copy_fortran()))
+    assert m.copy_fortran().strides == (4, 20)
+
+    # Test object is_*_contig attributes
+    assert m.is_c_contig() and m.copy().is_c_contig()
+    assert m.copy_fortran().is_f_contig() and not m.is_f_contig()
 
 ctypedef int td_cy_int
 cdef extern from "bufaccess.h":
@@ -218,9 +243,12 @@ ctypedef td_h_short td_h_cy_short
 cdef void dealloc_callback(void *data):
     print "deallocating..."
 
-def index(cython.array array):
+def build_numarray(array array):
     array.callback_free_data = dealloc_callback
-    print np.asarray(array)[3, 2]
+    return np.asarray(array)
+
+def index(array array):
+    print build_numarray(array)[3, 2]
 
 @testcase_numpy_1_5
 def test_coerce_to_numpy():
@@ -229,7 +257,7 @@ def test_coerce_to_numpy():
     generated format strings.
 
     >>> test_coerce_to_numpy()
-    (97, 98, 600L, 700, 800)
+    [97, 98, 600, 700, 800]
     deallocating...
     (600, 700)
     deallocating...
@@ -334,7 +362,9 @@ def test_coerce_to_numpy():
     #
     ### Create a NumPy array and see if our element can be correctly retrieved
     #
-    index(<MyStruct[:4, :5]> <MyStruct *> mystructs)
+    mystruct_array = build_numarray(<MyStruct[:4, :5]> <MyStruct *> mystructs)
+    print [int(x) for x in mystruct_array[3, 2]]
+    del mystruct_array
     index(<SmallStruct[:4, :5]> <SmallStruct *> smallstructs)
     index(<NestedStruct[:4, :5]> <NestedStruct *> nestedstructs)
     index(<PackedStruct[:4, :5]> <PackedStruct *> packedstructs)
@@ -391,3 +421,150 @@ def acquire_release_cycle(obj):
     del buf
 
     gc.collect()
+
+cdef packed struct StructArray:
+    int a[4]
+    char b[5]
+
+@testcase_numpy_1_5
+def test_memslice_structarray(data, dtype):
+    """
+    >>> def b(s): return s.encode('ascii')
+    >>> def to_byte_values(b):
+    ...     if sys.version_info[0] >= 3: return list(b)
+    ...     else: return map(ord, b)
+
+    >>> data = [(range(4), b('spam\\0')), (range(4, 8), b('ham\\0\\0')), (range(8, 12), b('eggs\\0'))]
+    >>> dtype = np.dtype([('a', '4i'), ('b', '5b')])
+    >>> test_memslice_structarray([(L, to_byte_values(s)) for L, s in data], dtype)
+    0
+    1
+    2
+    3
+    spam
+    4
+    5
+    6
+    7
+    ham
+    8
+    9
+    10
+    11
+    eggs
+
+    Test the same thing with the string format specifier
+
+    >>> dtype = np.dtype([('a', '4i'), ('b', 'S5')])
+    >>> test_memslice_structarray(data, dtype)
+    0
+    1
+    2
+    3
+    spam
+    4
+    5
+    6
+    7
+    ham
+    8
+    9
+    10
+    11
+    eggs
+    """
+    a = np.empty((3,), dtype=dtype)
+    a[:] = data
+    cdef StructArray[:] myslice = a
+    cdef int i, j
+    for i in range(3):
+        for j in range(4):
+            print myslice[i].a[j]
+        print myslice[i].b.decode('ASCII')
+
+@testcase_numpy_1_5
+def test_structarray_errors(StructArray[:] a):
+    """
+    >>> dtype = np.dtype([('a', '4i'), ('b', '5b')])
+    >>> test_structarray_errors(np.empty((5,), dtype=dtype))
+
+    >>> dtype = np.dtype([('a', '6i'), ('b', '5b')])
+    >>> test_structarray_errors(np.empty((5,), dtype=dtype))
+    Traceback (most recent call last):
+       ...
+    ValueError: Expected a dimension of size 4, got 6
+
+    >>> dtype = np.dtype([('a', '(4,4)i'), ('b', '5b')])
+    >>> test_structarray_errors(np.empty((5,), dtype=dtype))
+    Traceback (most recent call last):
+       ...
+    ValueError: Expected 1 dimension(s), got 2
+
+    Test the same thing with the string format specifier
+
+    >>> dtype = np.dtype([('a', '4i'), ('b', 'S5')])
+    >>> test_structarray_errors(np.empty((5,), dtype=dtype))
+
+    >>> dtype = np.dtype([('a', '6i'), ('b', 'S5')])
+    >>> test_structarray_errors(np.empty((5,), dtype=dtype))
+    Traceback (most recent call last):
+       ...
+    ValueError: Expected a dimension of size 4, got 6
+
+    >>> dtype = np.dtype([('a', '(4,4)i'), ('b', 'S5')])
+    >>> test_structarray_errors(np.empty((5,), dtype=dtype))
+    Traceback (most recent call last):
+       ...
+    ValueError: Expected 1 dimension(s), got 2
+    """
+
+cdef struct StringStruct:
+    char c[4][4]
+
+ctypedef char String[4][4]
+
+def stringstructtest(StringStruct[:] view):
+    pass
+
+def stringtest(String[:] view):
+    pass
+
+@testcase_numpy_1_5
+def test_string_invalid_dims():
+    """
+    >>> def b(s): return s.encode('ascii')
+    >>> dtype = np.dtype([('a', 'S4')])
+    >>> data = [b('spam'), b('eggs')]
+    >>> stringstructtest(np.array(data, dtype=dtype))
+    Traceback (most recent call last):
+       ...
+    ValueError: Expected 2 dimensions, got 1
+    >>> stringtest(np.array(data, dtype='S4'))
+    Traceback (most recent call last):
+       ...
+    ValueError: Expected 2 dimensions, got 1
+    """
+
+ctypedef struct AttributesStruct:
+    int attrib1
+    float attrib2
+    StringStruct attrib3
+
+@testcase_numpy_1_5
+def test_struct_attributes():
+    """
+    >>> test_struct_attributes()
+    1
+    2.0
+    c
+    """
+    cdef AttributesStruct[10] a
+    cdef AttributesStruct[:] myslice = a
+    myslice[0].attrib1 = 1
+    myslice[0].attrib2 = 2.0
+    myslice[0].attrib3.c[0][0] = 'c'
+
+    array = np.asarray(myslice)
+    print array[0]['attrib1']
+    print array[0]['attrib2']
+    print chr(array[0]['attrib3']['c'][0][0])

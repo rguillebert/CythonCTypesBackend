@@ -50,6 +50,7 @@ class IntroduceBufferAuxiliaryVars(CythonTransform):
                    in scope.entries.iteritems()
                    if entry.type.is_buffer]
         if len(bufvars) > 0:
+            bufvars.sort(key=lambda entry: entry.name)
             self.buffers_exists = True
 
         memviewslicevars = [entry for name, entry
@@ -412,7 +413,7 @@ def put_assign_to_buffer(lhs_cname, rhs_cname, buf_entry,
     code.putln("}") # Release stack
 
 def put_buffer_lookup_code(entry, index_signeds, index_cnames, directives,
-                           pos, code, negative_indices):
+                           pos, code, negative_indices, in_nogil_context):
     """
     Generates code to process indices and calculate an offset into
     a buffer. Returns a C string which gives a pointer which can be
@@ -455,9 +456,16 @@ def put_buffer_lookup_code(entry, index_signeds, index_cnames, directives,
             code.putln("if (%s) %s = %d;" % (
                 code.unlikely("%s >= %s%s" % (cname, cast, shape)),
                               tmp_cname, dim))
-        code.globalstate.use_utility_code(raise_indexerror_code)
+
+        if in_nogil_context:
+            code.globalstate.use_utility_code(raise_indexerror_nogil)
+            func = '__Pyx_RaiseBufferIndexErrorNogil'
+        else:
+            code.globalstate.use_utility_code(raise_indexerror_code)
+            func = '__Pyx_RaiseBufferIndexError'
+
         code.putln("if (%s) {" % code.unlikely("%s != -1" % tmp_cname))
-        code.putln('__Pyx_RaiseBufferIndexError(%s);' % tmp_cname)
+        code.putln('%s(%s);' % (func, tmp_cname))
         code.putln(code.error_goto(pos))
         code.putln('}')
         code.funcstate.release_temp(tmp_cname)
@@ -477,8 +485,8 @@ def use_bufstruct_declare_code(env):
 
 def get_empty_bufstruct_code(max_ndim):
     code = dedent("""
-        Py_ssize_t __Pyx_zeros[] = {%s};
-        Py_ssize_t __Pyx_minusones[] = {%s};
+        static Py_ssize_t __Pyx_zeros[] = {%s};
+        static Py_ssize_t __Pyx_minusones[] = {%s};
     """) % (", ".join(["0"] * max_ndim), ", ".join(["-1"] * max_ndim))
     return UtilityCode(proto=code)
 
@@ -563,19 +571,9 @@ class GetAndReleaseBufferUtilityCode(object):
 
     def put_code(self, output):
         code = output['utility_code_def']
-        proto = output['utility_code_proto']
+        proto_code = output['utility_code_proto']
         env = output.module_node.scope
         cython_scope = env.context.cython_scope
-
-        proto.put(dedent("""\
-            #if PY_MAJOR_VERSION < 3
-            static int __Pyx_GetBuffer(PyObject *obj, Py_buffer *view, int flags);
-            static void __Pyx_ReleaseBuffer(Py_buffer *view);
-            #else
-            #define __Pyx_GetBuffer PyObject_GetBuffer
-            #define __Pyx_ReleaseBuffer PyBuffer_Release
-            #endif
-        """))
         
         # Search all types for __getbuffer__ overloads
         types = []
@@ -602,52 +600,12 @@ class GetAndReleaseBufferUtilityCode(object):
 
         find_buffer_types(env)
 
-        code.put(dedent("""
-            #if PY_MAJOR_VERSION < 3
-            static int __Pyx_GetBuffer(PyObject *obj, Py_buffer *view, int flags) {
-              #if PY_VERSION_HEX >= 0x02060000
-              if (PyObject_CheckBuffer(obj)) return PyObject_GetBuffer(obj, view, flags);
-              #endif
-            """))
-        
-        if len(types) > 0:
-            clause = "if"
-            for t, get, release in types:
-                code.putln("  %s (PyObject_TypeCheck(obj, %s)) return %s(obj, view, flags);" % (clause, t, get))
-                clause = "else if"
-            code.putln("  else {")
-        code.put(dedent("""\
-            PyErr_Format(PyExc_TypeError, "'%100s' does not have the buffer interface", Py_TYPE(obj)->tp_name);
-            return -1;
-            """, 2))
-        if len(types) > 0:
-            code.putln("  }")
-        code.put(dedent("""\
-             }
+        proto, impl = TempitaUtilityCode.load_as_string(
+            "GetAndReleaseBuffer", from_file="Buffer.c",
+            context=dict(types=types))
 
-            static void __Pyx_ReleaseBuffer(Py_buffer *view) {
-              PyObject* obj = view->obj;
-              if (obj) {
-                #if PY_VERSION_HEX >= 0x02060000
-                if (PyObject_CheckBuffer(obj)) {PyBuffer_Release(view); return;}
-                #endif
-        """))
-                 
-        if len(types) > 0:
-            clause = "if"
-            for t, get, release in types:
-                if release:
-                    code.putln("%s (PyObject_TypeCheck(obj, %s)) %s(obj, view);" % (clause, t, release))
-                    clause = "else if"
-        code.put(dedent("""
-                Py_DECREF(obj);
-                view->obj = NULL;
-              }
-            }
-
-            #endif
-        """))
-
+        proto_code.putln(proto)
+        code.putln(impl)
 
 
 def mangle_dtype_name(dtype):
@@ -662,16 +620,20 @@ def mangle_dtype_name(dtype):
             prefix = "nn_"
         else:
             prefix = ""
-        return prefix + dtype.declaration_code("").replace(" ", "_")
+        type_decl = dtype.declaration_code("")
+        type_decl = type_decl.replace(" ", "_")
+        return prefix + type_decl.replace("[", "_").replace("]", "_")
 
 def get_type_information_cname(code, dtype, maxdepth=None):
-    # Output the run-time type information (__Pyx_TypeInfo) for given dtype,
-    # and return the name of the type info struct.
-    #
-    # Structs with two floats of the same size are encoded as complex numbers.
-    # One can seperate between complex numbers declared as struct or with native
-    # encoding by inspecting to see if the fields field of the type is
-    # filled in.
+    """
+    Output the run-time type information (__Pyx_TypeInfo) for given dtype,
+    and return the name of the type info struct.
+
+    Structs with two floats of the same size are encoded as complex numbers.
+    One can seperate between complex numbers declared as struct or with native
+    encoding by inspecting to see if the fields field of the type is
+    filled in.
+    """
     namesuffix = mangle_dtype_name(dtype)
     name = "__Pyx_TypeInfo_%s" % namesuffix
     structinfo_name = "__Pyx_StructFields_%s" % namesuffix
@@ -687,6 +649,12 @@ def get_type_information_cname(code, dtype, maxdepth=None):
     if name not in code.globalstate.utility_codes:
         code.globalstate.utility_codes.add(name)
         typecode = code.globalstate['typeinfo']
+
+        arraysizes = []
+        if dtype.is_array:
+            while dtype.is_array:
+                arraysizes.append(dtype.size)
+                dtype = dtype.base_type
 
         complex_possible = dtype.is_struct_or_union and dtype.can_be_complex()
 
@@ -729,7 +697,6 @@ def get_type_information_cname(code, dtype, maxdepth=None):
         elif dtype.is_pyobject:
             typegroup = 'O'
         else:
-            print dtype
             assert False
 
         if dtype.is_int:
@@ -737,15 +704,13 @@ def get_type_information_cname(code, dtype, maxdepth=None):
         else:
             is_unsigned = "0"
 
-        typecode.putln(('static __Pyx_TypeInfo %s = { "%s", %s, sizeof(%s), \'%s\', %s, %s };'
-                        ) % (name,
-                             rep,
-                             structinfo_name,
-                             declcode,
-                             typegroup,
-                             is_unsigned,
-                             flags,
-                        ), safe=True)
+        typeinfo = ('static __Pyx_TypeInfo %s = '
+                        '{ "%s", %s, sizeof(%s), { %s }, %s, \'%s\', %s, %s };')
+        tup = (name, rep, structinfo_name, declcode,
+               ', '.join([str(x) for x in arraysizes]) or '0', len(arraysizes),
+               typegroup, is_unsigned, flags)
+        typecode.putln(typeinfo % tup, safe=True)
+
     return name
 
 def load_buffer_utility(util_code_name, context=None, **kwargs):
@@ -762,6 +727,7 @@ buffer_struct_declare_code = load_buffer_utility("BufferStructDeclare",
 # Utility function to set the right exception
 # The caller should immediately goto_error
 raise_indexerror_code = load_buffer_utility("BufferIndexError")
+raise_indexerror_nogil = load_buffer_utility("BufferIndexErrorNogil")
 
 parse_typestring_repeat_code = UtilityCode(
 proto = """
@@ -770,11 +736,14 @@ impl = """
 """)
 
 raise_buffer_fallback_code = load_buffer_utility("BufferFallbackError")
-buffer_structs_code = load_buffer_utility("BufferFormatStructs")
+buffer_structs_code = load_buffer_utility(
+        "BufferFormatStructs", proto_block='utility_code_proto_before_types')
 acquire_utility_code = load_buffer_utility("BufferFormatCheck",
                                            context=context,
                                            requires=[buffer_structs_code])
 
 # See utility code BufferFormatFromTypeInfo
-_typeinfo_to_format_code = load_buffer_utility(
-        "TypeInfoToFormat", context={}, requires=[buffer_structs_code])
+_typeinfo_to_format_code = load_buffer_utility("TypeInfoToFormat", context={},
+                                               requires=[buffer_structs_code])
+typeinfo_compare_code = load_buffer_utility("TypeInfoCompare", context={},
+                                            requires=[buffer_structs_code])

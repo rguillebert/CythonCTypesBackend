@@ -83,6 +83,7 @@ def update_numpy_extension(ext):
     ext.include_dirs.append(numpy.get_include())
 
 def update_openmp_extension(ext):
+    ext.openmp = True
     language = ext.language
 
     if language == 'cpp':
@@ -95,6 +96,8 @@ def update_openmp_extension(ext):
 
         ext.extra_compile_args.extend(compile_flags.split())
         ext.extra_link_args.extend(link_flags.split())
+        return ext
+    elif sys.platform == 'win32':
         return ext
 
     return EXCLUDE_EXT
@@ -110,7 +113,9 @@ def get_openmp_compiler_flags(language):
         cc = sysconfig.get_config_var('CXX')
     else:
         cc = sysconfig.get_config_var('CC')
-    if not cc: return None # Windows?
+
+    if not cc:
+        return None # Windows?
 
     # For some reason, cc can be e.g. 'gcc -pthread'
     cc = cc.split()[0]
@@ -161,6 +166,8 @@ VER_DEP_MODULES = {
                                           ]),
     (2,5) : (operator.lt, lambda x: x in ['run.any',
                                           'run.all',
+                                          'run.yield_from_pep380',  # GeneratorExit
+                                          'run.test_generator_frame_cycle', # yield in try-finally
                                           'run.relativeimport_T542',
                                           'run.relativeimport_star_T542',
                                           ]),
@@ -254,6 +261,8 @@ class build_ext(_build_ext):
                 compiler_obj.compiler_so.remove('-Wstrict-prototypes')
             if CCACHE:
                 compiler_obj.compiler_so = CCACHE + compiler_obj.compiler_so
+            if getattr(ext, 'openmp', None) and compiler_obj.compiler_type == 'msvc':
+                ext.extra_compile_args.append('/openmp')
         except Exception:
             pass
         _build_ext.build_extension(self, ext)
@@ -599,7 +608,12 @@ class CythonCompileTestCase(unittest.TestCase):
             build_extension.finalize_options()
             if COMPILER:
                 build_extension.compiler = COMPILER
+
             ext_compile_flags = CFLAGS[:]
+            compiler = COMPILER or sysconfig.get_config_var('CC')
+
+            if self.language == 'c' and compiler == 'gcc':
+                ext_compile_flags.extend(['-std=c89', '-pedantic'])
             if  build_extension.compiler == 'mingw32':
                 ext_compile_flags.append('-Wno-format')
             if extra_extension_args is None:
@@ -1283,6 +1297,14 @@ def get_version():
             os.chdir(old_dir)
     return full_version
 
+_orig_stdout, _orig_stderr = sys.stdout, sys.stderr
+def flush_and_terminate(status):
+    try:
+        _orig_stdout.flush()
+        _orig_stderr.flush()
+    finally:
+        os._exit(status)
+
 def main():
 
     DISTDIR = os.path.join(os.getcwd(), os.path.dirname(sys.argv[0]))
@@ -1603,7 +1625,7 @@ def main():
         sys.exit(return_code)
     except PendingThreadsError:
         # normal program exit won't kill the threads, do it the hard way here
-        os._exit(return_code)
+        flush_and_terminate(return_code)
 
 if __name__ == '__main__':
     try:
@@ -1616,4 +1638,4 @@ if __name__ == '__main__':
             check_thread_termination(ignore_seen=False)
         except PendingThreadsError:
             # normal program exit won't kill the threads, do it the hard way here
-            os._exit(1)
+            flush_and_terminate(1)
