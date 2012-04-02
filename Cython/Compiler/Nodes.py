@@ -1097,12 +1097,6 @@ class CVarDefNode(StatNode):
                             cname=cname, visibility=visibility, in_pxd=self.in_pxd,
                             api=self.api, is_cdef=1)
 
-    def analyse_expressions(self, env):
-        pass
-
-    def generate_execution_code(self, code):
-        pass
-
 
 class CStructOrUnionDefNode(StatNode):
     #  name          string

@@ -1595,9 +1595,10 @@ if VALUE is not None:
         # We want to use the struct type information (so it can't happen
         # before this phase) but also create new objects to be declared
         # (so it can't happen later).
-        # The node needs to be returned for the CTypes backend.
+        # Note that we don't return the original node, as it is
+        # never used after this phase.
         if True: # private (default)
-            return node
+            return None
 
         self_value = ExprNodes.AttributeNode(
             pos = node.pos,
@@ -1676,7 +1677,7 @@ if VALUE is not None:
         return node
 
     def visit_CBaseTypeNode(self, node):
-        return node
+        return None
 
     def visit_CEnumDefNode(self, node):
         if node.visibility == 'public':
@@ -1696,7 +1697,7 @@ if VALUE is not None:
     def visit_CVarDefNode(self, node):
         # to ensure all CNameDeclaratorNodes are visited.
         self.visitchildren(node)
-        return node
+        return None
 
     def visit_CnameDecoratorNode(self, node):
         child_node = self.visit(node.node)
