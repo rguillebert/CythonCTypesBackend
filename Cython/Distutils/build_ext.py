@@ -126,6 +126,8 @@ class build_ext(_build_ext.build_ext):
         self.cython_gdb = False
         self.no_c_in_traceback = 0
         self.cython_compile_time_env = None
+        self.cython_ctypes = False
+        self.libraries = None
     
     def __getattr__(self, name):
         if name[:6] == 'pyrex_':
@@ -168,7 +170,8 @@ class build_ext(_build_ext.build_ext):
 
         for ext in self.extensions:
             ext.sources = self.cython_sources(ext.sources, ext)
-            self.build_extension(ext)
+            if not self.ctypes_backend:
+                self.build_extension(ext)
 
     def cython_sources(self, sources, extension):
         """
@@ -222,7 +225,11 @@ class build_ext(_build_ext.build_ext):
         cython_gdb = self.cython_gdb or getattr(extension, 'cython_gdb', False)
         cython_compile_time_env = self.cython_compile_time_env or \
             getattr(extension, 'cython_compile_time_env', None)
-
+        ctypes = self.cython_ctypes or getattr(extension, 'cython_ctypes', 0) or \
+                (extension.language and extension.language.lower() == 'ctypes')
+        self.ctypes_backend = ctypes
+        libraries = self.libraries or extension.libraries
+        
         # Set up the include_path for the Cython compiler:
         #    1.    Start with the command line option.
         #    2.    Add in any (unique) paths from the extension
@@ -253,6 +260,8 @@ class build_ext(_build_ext.build_ext):
             target_ext = '.cpp'
         else:
             target_ext = '.c'
+        if ctypes:
+            target_ext = '.py'
 
         # Decide whether to drop the generated C files into the temp dir
         # or the source tree.
@@ -270,6 +279,9 @@ class build_ext(_build_ext.build_ext):
             (base, ext) = os.path.splitext(os.path.basename(source))
             if ext == ".py":
                 # FIXME: we might want to special case this some more
+                if ctypes:
+                    new_sources.append(source)
+                    continue
                 ext = '.pyx'
             if ext == ".pyx":              # Cython source file
                 output_dir = target_dir or os.path.dirname(source)
@@ -277,7 +289,12 @@ class build_ext(_build_ext.build_ext):
                 cython_sources.append(source)
                 cython_targets[source] = new_sources[-1]
             elif ext == '.pxi' or ext == '.pxd':
-                if newest_dependency is None \
+                if ctypes:
+                    cython_sources.append(source)
+                    output_dir = target_dir or os.path.dirname(source)
+                    new_sources.append(os.path.join(output_dir, base + target_ext))
+                    cython_targets[source] = new_sources[-1]
+                elif newest_dependency is None \
                         or newer(source, newest_dependency):
                     newest_dependency = source
             else:
@@ -312,7 +329,9 @@ class build_ext(_build_ext.build_ext):
                     generate_pxi = cython_gen_pxi,
                     output_dir = output_dir,
                     gdb_debug = cython_gdb,
-                    compile_time_env = cython_compile_time_env)
+                    compile_time_env = cython_compile_time_env,
+                    ctypes = ctypes,
+                    libraries = libraries)
                 result = cython_compile(source, options=options,
                                         full_module_name=module_name)
             else:

@@ -581,7 +581,7 @@ class CythonCompileTestCase(unittest.TestCase):
             annotate = annotate,
             use_listing_file = False,
             cplus = self.language == 'cpp',
-            python_output = self.language == 'ctypes',
+            ctypes = self.language == 'ctypes',
             language_level = self.language_level,
             generate_pxi = False,
             evaluate_tree_assertions = True,
@@ -1536,6 +1536,8 @@ def main():
         if backend == 'c' and not options.use_c:
             continue
         elif backend == 'cpp' and not options.use_cpp:
+            continue
+        elif backend == 'ctypes' and not options.use_ctypes:
             continue
         elif backend not in BACKENDS:
             sys.stderr.write("Unknown backend requested: '%s' not one of [%s]\n" % (

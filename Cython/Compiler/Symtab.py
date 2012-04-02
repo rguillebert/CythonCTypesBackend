@@ -237,7 +237,6 @@ class Scope(object):
     # directives       dict                Helper variable for the recursive
     #                                      analysis, contains directive values.
     # is_internal       boolean            Is only used internally (simpler setup)
-    # is_python         boolean            The namespace is a python namespace (no flattening, ...)
 
     is_builtin_scope = 0
     is_py_class_scope = 0
@@ -253,7 +252,7 @@ class Scope(object):
     nogil = 0
     fused_to_specific = None
 
-    def __init__(self, name, outer_scope, parent_scope, is_python=False):
+    def __init__(self, name, outer_scope, parent_scope):
         # The outer_scope is the next scope in the lookup chain.
         # The parent_scope is used to derive the qualified name of this scope.
         self.name = name
@@ -287,7 +286,6 @@ class Scope(object):
         self.lambda_defs = []
         self.return_type = None
         self.id_counters = {}
-        self.is_python = getattr(outer_scope, "is_python", False) or is_python
 
     def __deepcopy__(self, memo):
         return self
@@ -945,7 +943,7 @@ class ModuleScope(Scope):
         import Builtin
         self.parent_module = parent_module
         outer_scope = Builtin.builtin_scope
-        Scope.__init__(self, name, outer_scope, parent_module, context.python_output)
+        Scope.__init__(self, name, outer_scope, parent_module)
         if name != "__init__":
             self.module_name = name
         else:

@@ -1,27 +1,49 @@
 from Cython.Compiler.Visitor import VisitorTransform
 from Cython.Compiler.TreeFragment import TreeFragment
 from Cython.Compiler.Nodes import CPtrDeclaratorNode, CArrayDeclaratorNode
+from Cython.Compiler.ExprNodes import NameNode, AttributeNode, SimpleCallNode
 
 class CDefVarTransform(VisitorTransform):
     visit_Node = VisitorTransform.recurse_to_children
 
-    def _get_type_node(self, decl, base_type):
+    
+    __ctypes_declare_node = AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_func")
+    
+    def _get_type_node(self, decl, base_type, is_sub_call=False):
         """ Returns the ctypes node required to get the type corresponding to the node """
 
-        if isinstance(decl, CPtrDeclaratorNode):
-            tf = TreeFragment(u'ctypes.POINTER(DUMMY)').root.stats[0].expr
-            tf.args = [self._get_type_node(decl.base, base_type)]
-            return tf
+        
+        if is_sub_call:
+            root = u'%s'
+        else:
+            root = u'cython.ctypes_declare(%s)'
+            
+        if isinstance(decl, CPtrDeclaratorNode):            
+            subType = SimpleCallNode(0,
+                         child_attrs=[],
+                         function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"POINTER"),
+                         args=[self._get_type_node(decl.base, base_type, is_sub_call=True)])
+            
+            if not is_sub_call:
+                subType = SimpleCallNode(0,
+                         child_attrs=[],
+                         function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_declare"),
+                         args=[subType])
+            return subType
 
         if isinstance(decl, CArrayDeclaratorNode):
-            tf = TreeFragment(u'DUMMY * %s' % (decl.dimension.value,)).root.stats[0].expr
-            tf.operand1 = self._get_type_node(decl.base, base_type)
+            tf = TreeFragment(root % (u'DUMMY * %s' % (decl.dimension.value,))).root.stats[0].expr
+            
+            if is_sub_call:
+                tf.operand1 = self._get_type_node(decl.base, base_type, is_sub_call=True)
+            else:
+                tf.args[0].operand1 = self._get_type_node(decl.base, base_type, is_sub_call=True)
             return tf
 
         if base_type.is_basic_c_type:
-            return TreeFragment(u'ctypes.c_%s' % (base_type.name,)).root.stats[0].expr
+            return TreeFragment(root % (u'ctypes.c_%s' % (base_type.name,))).root.stats[0].expr
         else:
-            return TreeFragment(u'%s' % (base_type.name,)).root.stats[0].expr
+            return TreeFragment(root % (u'%s' % (base_type.name,))).root.stats[0].expr
 
     def _get_ptr_name(self, decl):
         """ Returns the name of the pointer variable """
@@ -34,8 +56,8 @@ class CDefVarTransform(VisitorTransform):
             name = decl.base.name
         else:
             name = decl.name
-        tf = TreeFragment(u'%s = DUMMY()' % (name,)).root.stats[0]
-        tf.rhs.function = self._get_type_node(decl, base_type)
+        tf = TreeFragment(u'%s = DUMMY' % (name,)).root.stats[0]
+        tf.rhs = self._get_type_node(decl, base_type)
         return tf
 
     def visit_CVarDefNode(self, node):

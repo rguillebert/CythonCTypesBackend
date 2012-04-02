@@ -34,8 +34,8 @@ Options:
   -a, --annotate                 Produce a colorized HTML version of the source.
   --line-directives              Produce #line directives pointing to the .pyx source
   --cplus                        Output a C++ rather than C file.
-  --python                       Output Python code
-  --libs                         Specify the libraries to link with (Python backend only)
+  --ctypes                       Output Python code
+  --libraries                         Specify the libraries to link with (Python backend only)
   --embed[=<method_name>]        Generate a main() function that embeds the Python interpreter.
   -2                             Compile based on Python-2 syntax and code semantics.
   -3                             Compile based on Python-3 syntax and code semantics.
@@ -88,10 +88,10 @@ def parse_command_line(args):
                 options.use_listing_file = 1
             elif option in ("-+", "--cplus"):
                 options.cplus = 1
-            elif option == "--python":
-                options.python_output = 1
+            elif option == "--ctypes":
+                options.ctypes = 1
             elif option == "--libs":
-                options.libs += pop_arg().split(',')
+                options.libraries += pop_arg().split(',')
             elif option == "--embed":
                 Options.embed = "main"
             elif option.startswith("--embed="):
@@ -103,7 +103,7 @@ def parse_command_line(args):
             elif option in ("-w", "--working"):
                 options.working_path = pop_arg()
             elif option in ("-o", "--output-file"):
-                options.output_dir = options.output_file = pop_arg()
+                options.output_file = pop_arg()
             elif option in ("-r", "--recursive"):
                 options.recursive = 1
             elif option in ("-t", "--timestamps"):

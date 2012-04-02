@@ -348,3 +348,49 @@ class CythonDotParallel(object):
 import sys
 sys.modules['cython.parallel'] = CythonDotParallel()
 del sys
+
+import ctypes
+import ctypes.util
+def _ctype_find_func(lib_list, func_name):
+    for lib_name in lib_list:
+        lib_name = lib_name.strip()
+        lib = ctypes.CDLL(ctypes.util.find_library(lib_name))
+        try:
+            getattr(lib, func_name)
+            return getattr(lib, func_name)
+        except AttributeError:
+            pass
+        
+    raise NameError("Function '%s' cannot be found in libs: %s" % (func_name, lib_list))
+
+def ctypes_func(func_name, libs, restype, *argtypes):
+    if isinstance(libs, basestring):
+        libs = [libs]
+
+    ctype_func = _ctype_find_func(libs, func_name)
+    ctype_func.restype = restype
+    
+    ctype_func.argtypes = [t for t in argtypes]
+
+    return ctype_func
+
+def ctypes_struct(fields):
+    class struct(ctypes.Structure):
+        _fields_ = fields
+        
+    return struct
+
+def ctypes_declare(ctypes_t):        
+    return ctypes_t()
+
+class ctypes_extern(object):        
+    def __init__(self, include_file):
+        self.include_file = include_file
+    def __enter__(self, *args):
+        pass
+    def __exit__(self, *args):
+        pass
+    
+
+
+    
