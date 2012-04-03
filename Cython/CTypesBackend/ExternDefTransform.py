@@ -162,20 +162,53 @@ class ExternDefTransform(VisitorTransform):
         info = configure.configure(CConfigure)
 
         return info[str(name)]._fields_
-    
+    def _find_union_size(self, name):
+        class CConfigure(object):
+            _compilation_info_ = configure.ExternalCompilationInfo(
+                    pre_include_lines = [],
+                    includes = [self.include_file] if self.include_file else [],
+                    include_dirs = self.context.options.include_path,
+                    post_include_lines = [],
+                    libraries = [],
+                    library_dirs = [],
+                    separate_module_sources = [],
+                    separate_module_files = [],
+                )
+            union_t = configure.SizeOf(name)
+            
+        info = configure.configure(CConfigure)
+        return info['union_t']
+        
     def visit_CStructOrUnionDefNode(self, node):
-        if self.isInExternScope:
-            fields = self._make_ctypes_struct_union(node.name, node.attributes)
+        
+        if node.kind == "struct":
+            if self.isInExternScope:
+                fields = self._make_ctypes_struct_union(node.name, node.attributes)
+            else:
+                fields = self._make_struct_attr_list(node.attributes)
+            self.ctypes_struct_union_dict[node.name] = Shadow.ctypes_struct(fields)
+            node.attributes = [(field[0], self._ctypeToStr(field[1])) for field in fields]
+            return SingleAssignmentNode(0,
+                                        lhs=NameNode(0, name=node.name),
+                                        rhs=SimpleCallNode(0,
+                                                           child_attrs=[],
+                                                           function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_struct"),
+                                                           args=[NameNode(0, name='['+','.join(['("%s", %s)' % field for field in node.attributes]) + ']')]))
+        
         else:
+            # Union definition
             fields = self._make_struct_attr_list(node.attributes)
-        self.ctypes_struct_union_dict[node.name] = Shadow.ctypes_struct(fields)
-        node.attributes = [(field[0], self._ctypeToStr(field[1])) for field in fields]
-        return SingleAssignmentNode(0,
-                                    lhs=NameNode(0, name=node.name),
-                                    rhs=SimpleCallNode(0,
-                                                       child_attrs=[],
-                                                       function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_struct"),
-                                                       args=[NameNode(0, name='['+','.join(['("%s", %s)' % field for field in node.attributes]) + ']')]))
+            node.attributes = [(field[0], self._ctypeToStr(field[1])) for field in fields]
+            args=[NameNode(0, name='['+','.join(['("%s", %s)' % field for field in node.attributes]) + ']')]
+            if self.isInExternScope:
+                size = self._find_union_size(node.name)
+                args += [NameNode(0, name=u'size=%d' % size)]
+            return SingleAssignmentNode(0,
+                                        lhs=NameNode(0, name=node.name),
+                                        rhs=SimpleCallNode(0,
+                                                           child_attrs=[],
+                                                           function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_union"),
+                                                           args=args))
 
     
 
