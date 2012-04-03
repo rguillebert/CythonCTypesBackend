@@ -392,5 +392,15 @@ class ctypes_extern(object):
         pass
     
 
-
+def ctypes_union(fields, size=None):
+    if size is not None:
+        fields.append(('_pad', ctypes.c_byte*size))
+        
+    class union(ctypes.Union):
+        _fields_ = fields
+        
+    return union
+    
+    
+    
     
