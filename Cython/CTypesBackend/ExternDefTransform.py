@@ -3,7 +3,7 @@ import ctypes.util
 from ctypes_configure import configure
 from itertools import chain
 from Cython.Compiler.Visitor import VisitorTransform
-from Cython.Compiler.Nodes import CFuncDeclaratorNode, CVarDefNode, SingleAssignmentNode, CStructOrUnionDefNode, PyClassDefNode, StatListNode, PassStatNode, CPtrDeclaratorNode, DecoratorNode, FuncDefNode
+from Cython.Compiler.Nodes import CFuncDeclaratorNode, CVarDefNode, SingleAssignmentNode, CStructOrUnionDefNode, PyClassDefNode, StatListNode, PassStatNode, CPtrDeclaratorNode, DecoratorNode, FuncDefNode, CArrayDeclaratorNode
 from Cython.Compiler.ExprNodes import NameNode, AttributeNode, ListNode, NoneNode, TupleNode, StringNode, SimpleCallNode, ImportNode, CallNode
 from Cython.Compiler.TreeFragment import TreeFragment
 import ctypes
@@ -31,13 +31,14 @@ class ExternDefTransform(VisitorTransform):
     def __init__(self, context):
         super(ExternDefTransform, self).__init__()
         self.context = context
-        self.ctypes_struct_union_dict = {}
         self.isInExternScope = False
         self.include_file = None
-    def _ctypeToStr(self, ctype_t):
+    def _ctypeToStr(self, ctype_t, default_str=''):
         if ctype_t is None:
             return 'None'
-        return 'ctypes.' + ctype_t.__name__       
+        if ctype_t.__name__ not in dir(ctypes):
+            return default_str
+        return u'ctypes.' + ctype_t.__name__       
     def _cythonTypeToCtypes(self, cython_t, decl):
         base_type = cython_t.base_type
             
@@ -45,18 +46,23 @@ class ExternDefTransform(VisitorTransform):
             field_type = cythonTypetoCtypes[base_type.name]
             field_type_str = self._ctypeToStr(cythonTypetoCtypes[base_type.name])
         else:
-            field_type = self.ctypes_struct_union_dict[base_type.name]
+            field_type = None
             field_type_str = base_type.name
             
-        if isinstance(decl, CPtrDeclaratorNode):
+        if isinstance(decl, CPtrDeclaratorNode) or isinstance(decl, CArrayDeclaratorNode):
             field_name = getattr(decl.base, 'name', None)
         else:
             field_name = getattr(decl, 'name', None)
             
         while isinstance(decl, CPtrDeclaratorNode):
             field_type = POINTER(field_type)
-            field_type_str = 'ctypes.POINTER(%s)' % field_type_str
+            field_type_str = u'ctypes.POINTER(%s)' % field_type_str
             decl = decl.base
+            
+        if isinstance(decl, CArrayDeclaratorNode):
+            field_type *= int(decl.dimension.value)
+            field_type_str += u' * %s' % decl.dimension.value
+                
             
         return (field_name, field_type, field_type_str)
     
@@ -125,7 +131,7 @@ class ExternDefTransform(VisitorTransform):
     def visit_CVarDefNode(self, node):
         if not self.isInExternScope:
             return node
-#        import ipdb; ipdb.set_trace()
+        
         if len(node.declarators) < 1:
             return node
         
@@ -141,7 +147,7 @@ class ExternDefTransform(VisitorTransform):
             for decl in field.declarators:
                 fields.append(self._cythonTypeToCtypes(field, decl))
         
-        return [(field[0], field[1]) for field in fields]
+        return fields
             
     def _make_ctypes_struct_union(self, name, attributes):
         class CConfigure(object):
@@ -157,11 +163,12 @@ class ExternDefTransform(VisitorTransform):
                 )
 
         fields = self._make_struct_attr_list(attributes)
-        setattr(CConfigure, str(name), configure.Struct("struct " + str(name), fields))
+        setattr(CConfigure, str(name), configure.Struct("struct " + str(name), [(field[0], field[1]) for field in fields]))
 
         info = configure.configure(CConfigure)
 
-        return info[str(name)]._fields_
+        
+        return [(newField[0], newField[1], field[2]) for field, newField in zip(fields, info[str(name)]._fields_)]
     def _find_union_size(self, name):
         class CConfigure(object):
             _compilation_info_ = configure.ExternalCompilationInfo(
@@ -180,14 +187,13 @@ class ExternDefTransform(VisitorTransform):
         return info['union_t']
         
     def visit_CStructOrUnionDefNode(self, node):
-        
         if node.kind == "struct":
             if self.isInExternScope:
                 fields = self._make_ctypes_struct_union(node.name, node.attributes)
             else:
                 fields = self._make_struct_attr_list(node.attributes)
-            self.ctypes_struct_union_dict[node.name] = Shadow.ctypes_struct(fields)
-            node.attributes = [(field[0], self._ctypeToStr(field[1])) for field in fields]
+                
+            node.attributes = [(field[0], self._ctypeToStr(field[1], field[2])) for field in fields]
             return SingleAssignmentNode(0,
                                         lhs=NameNode(0, name=node.name),
                                         rhs=SimpleCallNode(0,
@@ -198,7 +204,7 @@ class ExternDefTransform(VisitorTransform):
         else:
             # Union definition
             fields = self._make_struct_attr_list(node.attributes)
-            node.attributes = [(field[0], self._ctypeToStr(field[1])) for field in fields]
+            node.attributes = [(field[0], self._ctypeToStr(field[1], field[2])) for field in fields]
             args=[NameNode(0, name='['+','.join(['("%s", %s)' % field for field in node.attributes]) + ']')]
             if self.isInExternScope:
                 size = self._find_union_size(node.name)
