@@ -14,8 +14,3 @@ class CImportToImportTransform(VisitorTransform):
         imported_names = u', '.join([import_info[1] for import_info in node.imported_names])
         return TreeFragment(u'from %s import %s' % (node.module_name, imported_names)).root.stats[0]
 
-    def visit_SingleAssignmentNode(self, node):
-        if isinstance(node.rhs, ImportNode):
-            return node.rhs
-        else:
-            return node

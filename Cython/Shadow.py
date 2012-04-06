@@ -402,5 +402,26 @@ def ctypes_union(fields, size=None):
     return union
     
     
-    
+def ctypes_typedef(ctypes_t):
+    return ctypes_t
+
+def ctypes_isPointer(obj):
+    if isinstance(obj, (ctypes._Pointer, ctypes.c_char_p, ctypes.c_wchar_p, ctypes.c_void_p)):
+        return True
+    return False
+
+def ctypes_classIsPointer(ctypes_t):
+    try:
+        return ctypes._Pointer in ctypes_t.mro()
+    except:
+        pass
+    return False
+        
+def ctypes_cast(obj, ctypes_t):
+    if ctypes_isPointer(obj):
+        if not ctypes_classIsPointer(ctypes_t):
+            obj = ctypes.c_void_p(obj.value)
+    if not ctypes_classIsPointer(ctypes_t):
+         return ctypes_t(obj)
+    return ctypes.cast(obj, ctypes_t)
     

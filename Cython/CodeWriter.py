@@ -111,19 +111,12 @@ class DeclarationWriter(TreeVisitor):
             self.visit(node.dimension)
         self.put(u']')
 
-    def visit_CArrayDeclaratorNode(self, node):
-        self.visit(node.base)
-        self.put(u'[')
-        if node.dimension is not None:
-            self.visit(node.dimension)
-        self.put(u']')
-
     def visit_CFuncDeclaratorNode(self, node):
         # TODO: except, gil, etc.
         self.visit(node.base)
         self.put(u'(')
         self.comma_separated_list(node.args)
-        self.endline(u')')
+        self.endline(u'):')
 
     def visit_CNameDeclaratorNode(self, node):
         self.put(node.name)
@@ -274,6 +267,9 @@ class DeclarationWriter(TreeVisitor):
         self.dedent()
 
     def visit_CArgDeclNode(self, node):
+        if node.base_type.is_self_arg:
+            self.put(u"self")
+            return
         if node.base_type.name is not None:
             self.visit(node.base_type)
             self.put(u" ")
@@ -448,7 +444,7 @@ class CodeWriter(DeclarationWriter):
         self.comma_separated_list(node.args) # Might need to discover whether we need () around tuples...hmm...
 
     def visit_SimpleCallNode(self, node):
-        if isinstance(node.function, (AtomicExprNode, SimpleCallNode)):
+        if isinstance(node.function, (AtomicExprNode, SimpleCallNode, NameNode, AttributeNode)):
             self.visit(node.function)
         else:
             self.put('(')
@@ -627,7 +623,23 @@ class CodeWriter(DeclarationWriter):
         self.put(u'[')
         self.visit(node.index)
         self.put(u']')
-
+        
+    def visit_NullNode(self, node):
+        self.put(u'None')
+        
+    def visit_RaiseStatNode(self, node):
+        self.startline('raise ')
+        self.visitchildren(node)
+        self.endline()
+        
+    def visit_CFuncDefNode(self, node):
+        self.startline('def ')
+        self.visit(node.declarator)
+        self.indent()
+        self.visit(node.body)
+        self.dedent()
+        self.endline()
+        
 class PxdWriter(DeclarationWriter):
     def __call__(self, node):
         print u'\n'.join(self.write(node).lines)

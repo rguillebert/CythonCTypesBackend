@@ -212,10 +212,12 @@ def create_ctypes_pipeline(context, options, result):
     from Cython.CTypesBackend.CDefVarManipulationTransform import CDefVarManipulationTransform
     from Cython.CTypesBackend.CImportToImportTransform import CImportToImportTransform
     from Cython.CTypesBackend.CDefToDefTransform import CDefToDefTransform
+    from Cython.CTypesBackend.PrimaryCmpNodeTransform import PrimaryCmpNodeTransform
+    from Cython.CTypesBackend.TypecastNodeTransform import TypecastNodeTransform
     from ParseTreeTransforms import NormalizeTree, PostParse
     from ParseTreeTransforms import AnalyseDeclarationsTransform, AnalyseExpressionsTransform
     from ParseTreeTransforms import InterpretCompilerDirectives, RemoveUnreachableCode
-    from Cython.CTypesBackend.CodeWriter import CodeWriter
+    from Cython.CodeWriter import CodeWriter
     import os
     import codecs
 
@@ -249,6 +251,8 @@ def create_ctypes_pipeline(context, options, result):
         CDefVarManipulationTransform(),
         CDefVarTransform(),
         CImportToImportTransform(),
+        PrimaryCmpNodeTransform(),
+        TypecastNodeTransform(),
         generate_python_code,
     ]
 

@@ -9,6 +9,7 @@ from Cython.Compiler.TreeFragment import TreeFragment
 import ctypes
 from ctypes import *
 from Cython import Shadow
+from distutils.errors import CompileError
 
 cythonTypetoCtypes = {'char': ctypes.c_char,
  'double': ctypes.c_double,
@@ -25,6 +26,45 @@ cythonTypetoCtypes = {'char': ctypes.c_char,
  'ushort': ctypes.c_ushort,
  'void': None}
 
+def ctypeToStr(ctype_t, default_str=''):
+    if ctype_t is None:
+        return 'None'
+    if 'P_' in ctype_t.__name__:
+        root = ctype_t.__name__[ctype_t.__name__.rfind('P_')+2:]
+        if root in dir(ctypes):
+            numPointer = ctype_t.__name__.count('P_')
+            return u'ctypes.POINTER(' * numPointer + u'ctypes.' + root + u')' * numPointer
+    if ctype_t.__name__ not in dir(ctypes):
+        return default_str
+    return u'ctypes.' + ctype_t.__name__    
+
+def cythonTypeToCtypes(cython_t, decl):
+    base_type = cython_t.base_type
+        
+    if base_type.is_basic_c_type:
+        field_type = cythonTypetoCtypes[base_type.name]
+        field_type_str = ctypeToStr(cythonTypetoCtypes[base_type.name])
+    else:
+        field_type = None
+        field_type_str = base_type.name
+        
+    if isinstance(decl, CPtrDeclaratorNode) or isinstance(decl, CArrayDeclaratorNode):
+        field_name = getattr(decl.base, 'name', None)
+    else:
+        field_name = getattr(decl, 'name', None)
+        
+    while isinstance(decl, CPtrDeclaratorNode):
+        field_type = POINTER(field_type)
+        field_type_str = u'ctypes.POINTER(%s)' % field_type_str
+        decl = decl.base
+        
+    if isinstance(decl, CArrayDeclaratorNode):
+        field_type *= int(decl.dimension.value)
+        field_type_str += u' * %s' % decl.dimension.value
+            
+        
+    return (field_name, field_type, field_type_str)
+    
 class ExternDefTransform(VisitorTransform):
     visit_Node = VisitorTransform.recurse_to_children
 
@@ -36,6 +76,11 @@ class ExternDefTransform(VisitorTransform):
     def _ctypeToStr(self, ctype_t, default_str=''):
         if ctype_t is None:
             return 'None'
+        if 'P_' in ctype_t.__name__:
+            root = ctype_t.__name__[ctype_t.__name__.rfind('P_')+2:]
+            if root in dir(ctypes):
+                numPointer = ctype_t.__name__.count('P_')
+                return u'ctypes.POINTER(' * numPointer + u'ctypes.' + root + u')' * numPointer
         if ctype_t.__name__ not in dir(ctypes):
             return default_str
         return u'ctypes.' + ctype_t.__name__       
@@ -100,15 +145,16 @@ class ExternDefTransform(VisitorTransform):
         func_lib = None
         func_libname = None
         for lib_name in self.context.options.libraries:
-            lib = ctypes.CDLL(ctypes.util.find_library(lib_name))
+            try:
+                lib = ctypes.CDLL(ctypes.util.find_library(lib_name))
+            except:
+                # Hack necessary for some libaries?
+                lib = ctypes.CDLL('.'.join(ctypes.util.find_library(lib_name).split('.')[:-1]))
             try:
                 getattr(lib, func_name)
             except AttributeError:
-                pass
-            finally:
-                func_lib = lib
-                func_libname = lib_name
-                break
+                continue
+            return lib_name
 
         if not func_lib:
             raise NameError("Function %s cannot be found" % func_name)
@@ -128,16 +174,18 @@ class ExternDefTransform(VisitorTransform):
                                     lhs=NameNode(0, name=declarator.base.name),
                                     rhs=rhs)
     
-    def visit_CVarDefNode(self, node):
+    def visit_CVarDefNode(self, node): 
         if not self.isInExternScope:
             return node
-        
         if len(node.declarators) < 1:
             return node
         
         declarator = node.declarators[0]
         if isinstance(declarator, CFuncDeclaratorNode):
             return self._CFuncToFunc(declarator, node)
+        elif isinstance(declarator, CPtrDeclaratorNode):
+            node.declarator = declarator
+            return self._CFuncToFunc(declarator.base, node)
         else:
             return node
     
@@ -165,8 +213,13 @@ class ExternDefTransform(VisitorTransform):
         fields = self._make_struct_attr_list(attributes)
         setattr(CConfigure, str(name), configure.Struct("struct " + str(name), [(field[0], field[1]) for field in fields]))
 
-        info = configure.configure(CConfigure)
-
+        try:
+            info = configure.configure(CConfigure)
+        except:
+            if len(fields) != 0:
+                raise CompileError(u'Unable to find fields of struct from the C compiler. struct: %s; fields: %s' % (str(name), fields))
+            else:
+                return []
         
         return [(newField[0], newField[1], field[2]) for field, newField in zip(fields, info[str(name)]._fields_)]
     def _find_union_size(self, name):
@@ -199,13 +252,13 @@ class ExternDefTransform(VisitorTransform):
                                         rhs=SimpleCallNode(0,
                                                            child_attrs=[],
                                                            function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_struct"),
-                                                           args=[NameNode(0, name='['+','.join(['("%s", %s)' % field for field in node.attributes]) + ']')]))
+                                                           args=[NameNode(0, name=u'['+','.join(['("%s", %s)' % field for field in node.attributes]) + ']')]))
         
         else:
             # Union definition
             fields = self._make_struct_attr_list(node.attributes)
             node.attributes = [(field[0], self._ctypeToStr(field[1], field[2])) for field in fields]
-            args=[NameNode(0, name='['+','.join(['("%s", %s)' % field for field in node.attributes]) + ']')]
+            args=[NameNode(0, name=u'['+','.join([u'("%s", %s)' % field for field in node.attributes]) + u']')]
             if self.isInExternScope:
                 size = self._find_union_size(node.name)
                 args += [NameNode(0, name=u'size=%d' % size)]
@@ -240,8 +293,32 @@ class ExternDefTransform(VisitorTransform):
             ImportNode(0, module_name=StringNode(0, value="ctypes"), name_list=[], level=0),
             ])
         
+    def visit_CTypeDefNode(self, node):
+        decl = node.declarator
+        _, type, type_name = self._cythonTypeToCtypes(node, decl)
+        while isinstance(decl, CPtrDeclaratorNode):
+            decl = decl.base
+        name = decl.name
+        
+        args = [NameNode(0, name=type_name)]
+        if self.isInExternScope:
+            if type is not None:
+                base_name = node.base_type.name + '*' * type_name.count('POINTER')
+                tempType = self._get_actual_ctype(base_name, type)
+                args = [NameNode(0, name=self._ctypeToStr(tempType))]
+                
+        return SingleAssignmentNode(0,
+                                    lhs=NameNode(0, name=name),
+                                    rhs=SimpleCallNode(0,
+                                                       child_attrs=[],
+                                                       function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_typedef"),
+                                                       args=args))
+        
+        
     def visit_ModuleNode(self, node):
         if hasattr(node.body, 'stats'):
             node.body.stats = [self._make_import_ctypes_node()] + node.body.stats
+        else:
+            node.body = StatListNode(0, stats=[self._make_import_ctypes_node(), node.body])
         self.recurse_to_children(node)
         return node
