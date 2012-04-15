@@ -18,17 +18,21 @@ class CDefVarTransform(VisitorTransform):
         else:
             root = u'cython.ctypes_declare(%s)'
             
-        if isinstance(decl, CPtrDeclaratorNode):            
-            subType = SimpleCallNode(0,
+        if isinstance(decl, CPtrDeclaratorNode):
+            numPointer = 0
+            while isinstance(decl, CPtrDeclaratorNode):
+                numPointer += 1
+                decl = decl.base
+            subType = self._get_type_node(decl, base_type, is_sub_call=True)
+            pointerNode = SimpleCallNode(0,
                          child_attrs=[],
-                         function=AttributeNode(0, obj=NameNode(0, name=u"ctypes"), attribute=u"POINTER"),
-                         args=[self._get_type_node(decl.base, base_type, is_sub_call=True)])
-            
+                         function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_pointer"),
+                         args=[subType, TreeFragment(u'%d' % numPointer).root.stats[0].expr])
             if not is_sub_call:
                 subType = SimpleCallNode(0,
                          child_attrs=[],
                          function=AttributeNode(0, obj=NameNode(0, name=u"cython"), attribute=u"ctypes_declare"),
-                         args=[subType])
+                         args=[pointerNode])
             return subType
 
         if isinstance(decl, CArrayDeclaratorNode):

@@ -33,7 +33,7 @@ def ctypeToStr(ctype_t, default_str=''):
         root = ctype_t.__name__[ctype_t.__name__.rfind('P_')+2:]
         if root in dir(ctypes):
             numPointer = ctype_t.__name__.count('P_')
-            return u'ctypes.POINTER(' * numPointer + u'ctypes.' + root + u')' * numPointer
+            return u'cython.ctypes_pointer(ctypes.%(root)s,%(numPointer)s)' % vars()
     if ctype_t.__name__ not in dir(ctypes):
         return default_str
     return u'ctypes.' + ctype_t.__name__    
@@ -53,9 +53,12 @@ def cythonTypeToCtypes(cython_t, decl):
     else:
         field_name = getattr(decl, 'name', None)
         
+    numPointer = 0
+    orig_field_type_str = field_type_str
     while isinstance(decl, CPtrDeclaratorNode):
         field_type = POINTER(field_type)
-        field_type_str = u'ctypes.POINTER(%s)' % field_type_str
+        numPointer += 1
+        field_type_str = u'cython.ctypes_pointer(%s,%d)' % (orig_field_type_str, numPointer)
         decl = decl.base
         
     if isinstance(decl, CArrayDeclaratorNode):
@@ -80,7 +83,7 @@ class ExternDefTransform(VisitorTransform):
             root = ctype_t.__name__[ctype_t.__name__.rfind('P_')+2:]
             if root in dir(ctypes):
                 numPointer = ctype_t.__name__.count('P_')
-                return u'ctypes.POINTER(' * numPointer + u'ctypes.' + root + u')' * numPointer
+                return u'cython.ctypes_pointer(ctypes.%(root)s,%(numPointer)s)' % vars()
         if ctype_t.__name__ not in dir(ctypes):
             return default_str
         return u'ctypes.' + ctype_t.__name__       
@@ -99,9 +102,12 @@ class ExternDefTransform(VisitorTransform):
         else:
             field_name = getattr(decl, 'name', None)
             
+        numPointer = 0
+        orig_field_type_str = field_type_str
         while isinstance(decl, CPtrDeclaratorNode):
             field_type = POINTER(field_type)
-            field_type_str = u'ctypes.POINTER(%s)' % field_type_str
+            numPointer += 1
+            field_type_str = u'cython.ctypes_pointer(%s,%d)' % (orig_field_type_str, numPointer)
             decl = decl.base
             
         if isinstance(decl, CArrayDeclaratorNode):
@@ -184,8 +190,9 @@ class ExternDefTransform(VisitorTransform):
         if isinstance(declarator, CFuncDeclaratorNode):
             return self._CFuncToFunc(declarator, node)
         elif isinstance(declarator, CPtrDeclaratorNode):
-            node.declarator = declarator
-            return self._CFuncToFunc(declarator.base, node)
+            if isinstance(declarator.base, CFuncDeclaratorNode):
+                node.declarator = declarator
+                return self._CFuncToFunc(declarator.base, node)
         else:
             return node
     
@@ -303,7 +310,7 @@ class ExternDefTransform(VisitorTransform):
         args = [NameNode(0, name=type_name)]
         if self.isInExternScope:
             if type is not None:
-                base_name = node.base_type.name + '*' * type_name.count('POINTER')
+                base_name = node.base_type.name + '*' * type_name.lower().count('pointer')
                 tempType = self._get_actual_ctype(base_name, type)
                 args = [NameNode(0, name=self._ctypeToStr(tempType))]
                 

@@ -371,7 +371,11 @@ def ctypes_func(func_name, libs, restype, *argtypes):
     ctype_func.restype = restype
     
     ctype_func.argtypes = [t for t in argtypes]
-
+    
+    ctype_func.__doc__ = u'''%(func_name)s: a ctypes wrapped function
+    returns: %(restype)s
+    args: %(argtypes)s
+    ''' % vars()
     return ctype_func
 
 def ctypes_struct(fields):
@@ -422,6 +426,15 @@ def ctypes_cast(obj, ctypes_t):
         if not ctypes_classIsPointer(ctypes_t):
             obj = ctypes.c_void_p(obj.value)
     if not ctypes_classIsPointer(ctypes_t):
-         return ctypes_t(obj)
+        if obj is None:
+            obj = 0
+        return ctypes_t(obj)
     return ctypes.cast(obj, ctypes_t)
+
+def ctypes_pointer(base_t, numPointer=1):
+    return_t = base_t
+    for i in range(numPointer):
+        return_t = ctypes.POINTER(return_t)
+        
+    return return_t
     
